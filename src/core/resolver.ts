@@ -8,12 +8,32 @@ import type { ConflictPair } from "./scanner.js";
 
 export type ResolveChoice = "original" | "conflict" | "both" | "skip";
 
+/**
+ * When multiple conflicts exist for the same original,
+ * user picks one version to keep. Others are deleted (or kept).
+ */
+export type GroupTarget =
+	| { type: "original" }
+	| { type: "conflict"; conflictIndex: number }
+	| { type: "skip" };
+
 export interface ResolveResult {
 	/** The conflict pair that was resolved */
 	pair: ConflictPair;
 	/** The choice made */
 	choice: ResolveChoice;
 	/** Whether the resolution succeeded */
+	success: boolean;
+	/** Error message if failed */
+	error?: string;
+}
+
+export interface GroupResolveResult {
+	/** Number of files deleted */
+	deleted: number;
+	/** Number of files kept (renamed) */
+	kept: number;
+	/** Whether all operations succeeded */
 	success: boolean;
 	/** Error message if failed */
 	error?: string;
@@ -29,7 +49,95 @@ export interface ResolveOptions {
 const DEFAULT_BACKUP_DIR = ".stc-backup";
 
 /**
- * Resolve a single conflict pair.
+ * Resolve a group of conflicts for the same original file atomically.
+ *
+ * @param pairs - All conflict pairs sharing the same original
+ * @param target - Which version to keep
+ * @param options - Resolve options
+ */
+export function resolveGroup(
+	pairs: ConflictPair[],
+	target: GroupTarget,
+	options: ResolveOptions = {},
+): GroupResolveResult {
+	const { backup = true, backupDir } = options;
+
+	if (pairs.length === 0) {
+		return { deleted: 0, kept: 0, success: true };
+	}
+
+	const originalPath = pairs[0]!.meta.originalPath;
+	const originalExists = pairs[0]!.originalExists;
+
+	try {
+		if (target.type === "skip") {
+			return { deleted: 0, kept: 0, success: true };
+		}
+
+		// Determine which file becomes the "winner"
+		let winnerPath: string;
+		if (target.type === "original") {
+			if (!originalExists) {
+				return {
+					deleted: 0,
+					kept: 0,
+					success: false,
+					error: "Original file does not exist",
+				};
+			}
+			winnerPath = originalPath;
+		} else {
+			const conflictPair = pairs[target.conflictIndex];
+			if (!conflictPair) {
+				return {
+					deleted: 0,
+					kept: 0,
+					success: false,
+					error: `Conflict index ${target.conflictIndex} out of range`,
+				};
+			}
+			winnerPath = conflictPair.meta.conflictPath;
+		}
+
+		// Backup all files before any mutations
+		if (backup) {
+			if (originalExists) {
+				backupFile(originalPath, backupDir);
+			}
+			for (const pair of pairs) {
+				backupFile(pair.meta.conflictPath, backupDir);
+			}
+		}
+
+		// Delete all conflict files
+		for (const pair of pairs) {
+			if (pair.meta.conflictPath !== winnerPath) {
+				unlinkSync(pair.meta.conflictPath);
+			}
+		}
+
+		// If winner is a conflict file, replace the original
+		if (target.type === "conflict") {
+			if (originalExists) {
+				unlinkSync(originalPath);
+			}
+			renameSync(winnerPath, originalPath);
+		}
+
+		const deletedCount = pairs.length - (target.type === "conflict" ? 1 : 0) + (target.type === "conflict" && originalExists ? 1 : 0);
+		return { deleted: deletedCount, kept: 1, success: true };
+	} catch (err) {
+		return {
+			deleted: 0,
+			kept: 0,
+			success: false,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
+ * Resolve a single conflict pair (simple 1v1 case).
  */
 export function resolveConflict(
 	pair: ConflictPair,
@@ -59,9 +167,6 @@ export function resolveConflict(
 	}
 }
 
-/**
- * Keep the original file, delete the conflict file.
- */
 function keepOriginal(
 	pair: ConflictPair,
 	backup: boolean,
@@ -78,9 +183,6 @@ function keepOriginal(
 	return { pair, choice: "original", success: true };
 }
 
-/**
- * Keep the conflict file (rename to original name), delete the original.
- */
 function keepConflict(
 	pair: ConflictPair,
 	backup: boolean,
@@ -88,35 +190,28 @@ function keepConflict(
 ): ResolveResult {
 	const { originalPath, conflictPath } = pair.meta;
 
-	// Backup original if it exists
 	if (pair.originalExists && backup) {
 		backupFile(originalPath, backupDir);
 	}
 
-	// If original exists, remove it
 	if (pair.originalExists) {
 		unlinkSync(originalPath);
 	}
 
-	// Rename conflict to original
 	renameSync(conflictPath, originalPath);
 
 	return { pair, choice: "conflict", success: true };
 }
 
-/**
- * Keep both files — rename conflict file to a descriptive name.
- */
 function keepBoth(pair: ConflictPair): ResolveResult {
-	const { originalPath, conflictPath, conflictDate } = pair.meta;
+	const { originalPath, conflictPath, conflictDate, deviceId } = pair.meta;
 
-	// Generate a descriptive name for the conflict file
 	const ext = originalPath.substring(originalPath.lastIndexOf("."));
 	const base = originalPath.substring(0, originalPath.lastIndexOf("."));
 	const dateStr = formatDate(conflictDate);
-	const newPath = `${base}.conflict-${dateStr}${ext}`;
+	// Include device ID to avoid name collision when multiple conflicts share same date
+	const newPath = `${base}.conflict-${dateStr}-${deviceId}${ext}`;
 
-	// Only rename if the new path differs
 	if (conflictPath !== newPath) {
 		renameSync(conflictPath, newPath);
 	}
@@ -125,7 +220,23 @@ function keepBoth(pair: ConflictPair): ResolveResult {
 }
 
 /**
- * Auto-resolve a conflict using the specified strategy.
+ * Auto-resolve a group of conflicts for the same original file.
+ */
+export function autoResolveGroup(
+	pairs: ConflictPair[],
+	strategy: AutoStrategy,
+	options: ResolveOptions = {},
+): GroupResolveResult {
+	if (pairs.length === 0) {
+		return { deleted: 0, kept: 0, success: true };
+	}
+
+	const target = getGroupTarget(pairs, strategy);
+	return resolveGroup(pairs, target, options);
+}
+
+/**
+ * Auto-resolve a single conflict pair.
  */
 export function autoResolve(
 	pair: ConflictPair,
@@ -168,6 +279,92 @@ function getChoiceForStrategy(pair: ConflictPair, strategy: AutoStrategy): Resol
 	}
 }
 
+/**
+ * Determine which version to keep for a group of conflicts.
+ */
+function getGroupTarget(pairs: ConflictPair[], strategy: AutoStrategy): GroupTarget {
+	if (strategy === "original") {
+		return { type: "original" };
+	}
+	if (strategy === "conflict") {
+		// Pick the newest conflict version
+		let newestIdx = 0;
+		let newestTime = pairs[0]!.meta.conflictDate.getTime();
+		for (let i = 1; i < pairs.length; i++) {
+			const t = pairs[i]!.meta.conflictDate.getTime();
+			if (t > newestTime) {
+				newestTime = t;
+				newestIdx = i;
+			}
+		}
+		return { type: "conflict", conflictIndex: newestIdx };
+	}
+
+	// For time/size strategies, compare original against ALL conflict versions
+	const firstPair = pairs[0]!;
+
+	// Build a flat list: [{ kind: "original" | "conflict", index, mtime, size }]
+	const candidates: Array<{
+		kind: "original" | "conflict";
+		index: number;
+		mtime: Date | null;
+		size: number;
+	}> = [];
+
+	if (firstPair.originalExists && firstPair.originalMtime) {
+		candidates.push({
+			kind: "original",
+			index: -1,
+			mtime: firstPair.originalMtime,
+			size: firstPair.originalSize,
+		});
+	}
+
+	for (let i = 0; i < pairs.length; i++) {
+		candidates.push({
+			kind: "conflict",
+			index: i,
+			mtime: pairs[i]!.conflictMtime,
+			size: pairs[i]!.conflictSize,
+		});
+	}
+
+	if (candidates.length === 0) {
+		return { type: "conflict", conflictIndex: 0 };
+	}
+
+	let winnerIdx = 0;
+	for (let i = 1; i < candidates.length; i++) {
+		const curr = candidates[winnerIdx]!;
+		const chall = candidates[i]!;
+
+		const wins = (() => {
+			switch (strategy) {
+				case "newest":
+					return (chall.mtime?.getTime() ?? 0) > (curr.mtime?.getTime() ?? 0);
+				case "oldest":
+					return (chall.mtime?.getTime() ?? Infinity) < (curr.mtime?.getTime() ?? Infinity);
+				case "largest":
+					return chall.size > curr.size;
+				case "smallest":
+					return chall.size < curr.size;
+				default:
+					return false;
+			}
+		})();
+
+		if (wins) {
+			winnerIdx = i;
+		}
+	}
+
+	const winner = candidates[winnerIdx]!;
+	if (winner.kind === "original") {
+		return { type: "original" };
+	}
+	return { type: "conflict", conflictIndex: winner.index };
+}
+
 function backupFile(filePath: string, backupDir?: string): void {
 	if (!existsSync(filePath)) return;
 
@@ -179,7 +376,6 @@ function backupFile(filePath: string, backupDir?: string): void {
 	const basename = filePath.split(/[/\\]/).pop()!;
 	const dest = join(destDir, basename);
 
-	// Avoid overwriting — append number if needed
 	let finalDest = dest;
 	let counter = 1;
 	while (existsSync(finalDest)) {

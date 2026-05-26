@@ -1,14 +1,16 @@
 /**
  * `stc auto` command — auto-resolve conflicts using a strategy.
+ *
+ * Groups conflicts by original file for correct multi-conflict handling.
  */
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { scanConflicts, type ScanOptions } from "../core/scanner.js";
+import { scanConflicts, groupByOriginal, type ScanOptions } from "../core/scanner.js";
 import {
-	autoResolve,
+	autoResolveGroup,
 	type AutoStrategy,
-	type ResolveResult,
+	type GroupResolveResult,
 } from "../core/resolver.js";
 import { promptAutoConfirm } from "../ui/prompts.js";
 
@@ -75,56 +77,50 @@ async function runAuto(directory: string, options: AutoCommandOptions): Promise<
 		return;
 	}
 
+	// Group by original file
+	const groups = groupByOriginal(pairs);
+	const groupEntries = [...groups.entries()];
+
 	console.log(
 		chalk.bold(
-			`${isExecute ? "EXECUTING" : "DRY RUN"}: Auto-resolve ${pairs.length} conflicts using "${strategy}" strategy`,
+			`${isExecute ? "EXECUTING" : "DRY RUN"}: Auto-resolve ${groups.size} group${groups.size > 1 ? "s" : ""} (${pairs.length} total conflicts) using "${strategy}" strategy`,
 		),
 	);
 	console.log("");
 
-	// Preview all resolutions
-	const results: ResolveResult[] = [];
-	for (const pair of pairs) {
-		const result = autoResolve(pair, strategy, { backup: isExecute });
-		results.push(result);
+	// Preview
+	const results: Array<{ original: string; count: number; result: GroupResolveResult }> = [];
+
+	for (const [originalPath, groupPairs] of groupEntries) {
+		const result = autoResolveGroup(groupPairs, strategy, { backup: isExecute });
+		results.push({ original: originalPath, count: groupPairs.length, result });
 		console.log(
-			`  ${isExecute ? "" : "[dry-run] "} ${pair.meta.originalName} → keep ${result.choice}`,
+			`  ${isExecute ? "" : "[dry-run] "} ${groupPairs[0]!.meta.originalName} (${groupPairs.length} conflict${groupPairs.length > 1 ? "s" : ""}) → ${result.success ? "ok" : `FAILED: ${result.error ?? "unknown"}`}`,
 		);
 	}
 
 	if (!isExecute) {
 		console.log("");
-		console.log(
-			chalk.yellow("This was a dry run. Use --execute to apply changes."),
-		);
+		console.log(chalk.yellow("This was a dry run. Use --execute to apply changes."));
 		return;
 	}
 
-	// Confirm before executing
-	const confirmed = await promptAutoConfirm(strategy, pairs.length);
+	// Confirm
+	const confirmed = await promptAutoConfirm(strategy, groups.size);
 	if (!confirmed) {
 		console.log(chalk.gray("Cancelled."));
 		return;
 	}
 
-	// Already resolved in dry-run pass with backup enabled, just report
-	const successCount = results.filter((r) => r.success).length;
-	const failCount = results.filter((r) => !r.success).length;
+	const successCount = results.filter((r) => r.result.success).length;
+	const failCount = results.filter((r) => !r.result.success).length;
 
 	console.log("");
-	console.log(
-		chalk.green(
-			`✓ Resolved ${successCount} conflicts.`,
-		),
-	);
+	console.log(chalk.green(`✓ Resolved ${successCount} group${successCount > 1 ? "s" : ""}.`));
 	if (failCount > 0) {
-		console.log(
-			chalk.red(
-				`✗ Failed ${failCount}:`,
-			),
-		);
-		for (const r of results.filter((r) => !r.success)) {
-			console.log(`  ${r.pair.meta.originalName}: ${r.error}`);
+		console.log(chalk.red(`✗ Failed ${failCount}:`));
+		for (const r of results.filter((r) => !r.result.success)) {
+			console.log(`  ${r.original}: ${r.result.error}`);
 		}
 	}
 }

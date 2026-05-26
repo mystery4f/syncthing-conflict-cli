@@ -4,16 +4,138 @@
 
 import inquirer from "inquirer";
 import type { ConflictPair } from "../core/scanner.js";
-import type { ResolveChoice } from "../core/resolver.js";
+import type { ResolveChoice, GroupTarget } from "../core/resolver.js";
 
 export interface PromptAction {
 	choice: ResolveChoice;
 	viewDiff?: boolean;
+	viewDiffConflictIndex?: number;
+	quit?: boolean;
+}
+
+export interface GroupPromptAction {
+	target: GroupTarget;
+	viewDiff?: boolean;
+	viewDiffConflictIndex?: number;
 	quit?: boolean;
 }
 
 /**
- * Prompt the user to choose an action for a conflict pair.
+ * Prompt the user to choose an action for a group of conflicts sharing the same original.
+ */
+export async function promptGroupAction(
+	pairs: ConflictPair[],
+	groupIndex: number,
+	totalGroups: number,
+): Promise<GroupPromptAction> {
+	const firstPair = pairs[0]!;
+	const { meta, originalExists, originalSize, originalMtime } = firstPair;
+
+	console.log("");
+	console.log("═".repeat(60));
+	console.log(
+		`Conflict group ${groupIndex + 1}/${totalGroups}: ${meta.originalName}`,
+	);
+	console.log(`  ${pairs.length} conflict version${pairs.length > 1 ? "s" : ""}`);
+	if (!originalExists) {
+		console.log("  ⚠ Original file missing (orphan conflict)");
+	}
+	console.log("");
+
+	// List all versions
+	if (originalExists) {
+		console.log(
+			`  [O] Original   ${formatSize(originalSize)}  modified ${formatDate(originalMtime)}`,
+		);
+	}
+	for (let i = 0; i < pairs.length; i++) {
+		const p = pairs[i]!;
+		console.log(
+			`  [${i + 1}] ${p.meta.deviceId}  ${formatSize(p.conflictSize)}  modified ${formatDate(p.conflictMtime)}`,
+		);
+	}
+	console.log("═".repeat(60));
+
+	const choices: Array<{ name: string; value: string }> = [];
+
+	// View diff options
+	if (originalExists) {
+		for (let i = 0; i < pairs.length; i++) {
+			choices.push({
+				name: `Diff: original vs conflict #${i + 1} (${pairs[i]!.meta.deviceId})`,
+				value: `diff:${i}`,
+			});
+		}
+	}
+	if (pairs.length > 1) {
+		choices.push({
+			name: "Diff: conflict #1 vs conflict #2",
+			value: "diff:0vs1",
+		});
+	}
+
+	// Keep options
+	if (originalExists) {
+		choices.push({ name: "Keep original", value: "original" });
+	}
+	for (let i = 0; i < pairs.length; i++) {
+		choices.push({
+			name: `Keep conflict #${i + 1} (${pairs[i]!.meta.deviceId})`,
+			value: `conflict:${i}`,
+		});
+	}
+
+	choices.push({ name: "Skip", value: "skip" });
+	choices.push({ name: "Quit", value: "quit" });
+
+	const { action } = await inquirer.prompt<{
+		action: string;
+	}>([
+		{
+			type: "list",
+			name: "action",
+			message: "Choose action:",
+			choices,
+		},
+	]);
+
+	if (action === "quit") {
+		return { target: { type: "skip" }, quit: true };
+	}
+	if (action === "skip") {
+		return { target: { type: "skip" } };
+	}
+	if (action === "original") {
+		return { target: { type: "original" } };
+	}
+	if (action.startsWith("conflict:")) {
+		const idx = Number.parseInt(action.split(":")[1]!, 10);
+		return { target: { type: "conflict", conflictIndex: idx } };
+	}
+	if (action.startsWith("diff:")) {
+		const diffArg = action.split(":")[1]!;
+		if (diffArg.includes("vs")) {
+			// diff between two conflict files
+			const [a, b] = diffArg.split("vs").map(Number);
+			return {
+				target: { type: "skip" },
+				viewDiff: true,
+				viewDiffConflictIndex: a,
+			};
+		}
+		const idx = Number.parseInt(diffArg, 10);
+		return {
+			target: { type: "skip" },
+			viewDiff: true,
+			viewDiffConflictIndex: idx,
+		};
+	}
+
+	return { target: { type: "skip" } };
+}
+
+/**
+ * Prompt the user to choose an action for a single conflict pair (simple 1v1).
  */
 export async function promptConflictAction(
 	pair: ConflictPair,
@@ -79,7 +201,7 @@ export async function promptAutoConfirm(
 		{
 			type: "confirm",
 			name: "confirm",
-			message: `Auto-resolve ${count} conflicts using "${strategy}" strategy?`,
+			message: `Auto-resolve ${count} conflict group${count > 1 ? "s" : ""} using "${strategy}" strategy?`,
 			default: false,
 		},
 	]);

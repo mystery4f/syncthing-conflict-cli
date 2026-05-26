@@ -120,3 +120,20 @@ export function groupByDirectory(pairs: ConflictPair[]): Map<string, ConflictPai
 
 	return groups;
 }
+
+/**
+ * Group conflict pairs by their original file path.
+ * Multiple conflict files pointing to the same original are grouped together.
+ */
+export function groupByOriginal(pairs: ConflictPair[]): Map<string, ConflictPair[]> {
+	const groups = new Map<string, ConflictPair[]>();
+
+	for (const pair of pairs) {
+		const key = pair.meta.originalPath;
+		const group = groups.get(key) ?? [];
+		group.push(pair);
+		groups.set(key, group);
+	}
+
+	return groups;
+}
