@@ -1,10 +1,11 @@
 /**
- * Inquirer-based interactive prompts for conflict resolution.
+ * Simple readline-based interactive prompts for conflict resolution.
+ * No inquirer dependency — works in all terminals.
  */
 
-import inquirer from "inquirer";
+import { createInterface } from "node:readline";
+import type { GroupTarget, ResolveChoice } from "../core/resolver.js";
 import type { ConflictPair } from "../core/scanner.js";
-import type { ResolveChoice, GroupTarget } from "../core/resolver.js";
 
 export interface PromptAction {
 	choice: ResolveChoice;
@@ -17,7 +18,38 @@ export interface GroupPromptAction {
 	target: GroupTarget;
 	viewDiff?: boolean;
 	viewDiffConflictIndex?: number;
+	mergeConflictIndex?: number;
 	quit?: boolean;
+}
+
+/**
+ * Ask the user to pick from numbered choices.
+ * Returns the value of the selected choice, or null if quit.
+ */
+async function numberedPrompt(
+	choices: Array<{ name: string; value: string }>,
+): Promise<string | null> {
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+	return new Promise((resolve) => {
+		for (let i = 0; i < choices.length; i++) {
+			const choice = choices[i];
+			if (choice) console.log(`  ${i + 1}) ${choice.name}`);
+		}
+		console.log("");
+
+		rl.question(`  Enter number (1-${choices.length}): `, (answer) => {
+			rl.close();
+			const num = Number.parseInt(answer.trim(), 10);
+			if (num >= 1 && num <= choices.length) {
+				const selected = choices[num - 1];
+				resolve(selected?.value ?? "skip");
+			} else {
+				console.log("  Invalid choice. Skipping.");
+				resolve("skip");
+			}
+		});
+	});
 }
 
 /**
@@ -28,107 +60,94 @@ export async function promptGroupAction(
 	groupIndex: number,
 	totalGroups: number,
 ): Promise<GroupPromptAction> {
-	const firstPair = pairs[0]!;
+	const firstPair = pairs[0];
+	if (!firstPair) return { target: { type: "skip" }, quit: true };
 	const { meta, originalExists, originalSize, originalMtime } = firstPair;
 
 	console.log("");
 	console.log("═".repeat(60));
-	console.log(
-		`Conflict group ${groupIndex + 1}/${totalGroups}: ${meta.originalName}`,
-	);
+	console.log(`Conflict group ${groupIndex + 1}/${totalGroups}: ${meta.originalName}`);
 	console.log(`  ${pairs.length} conflict version${pairs.length > 1 ? "s" : ""}`);
 	if (!originalExists) {
 		console.log("  ⚠ Original file missing (orphan conflict)");
 	}
 	console.log("");
 
-	// List all versions
 	if (originalExists) {
 		console.log(
 			`  [O] Original   ${formatSize(originalSize)}  modified ${formatDate(originalMtime)}`,
 		);
 	}
 	for (let i = 0; i < pairs.length; i++) {
-		const p = pairs[i]!;
+		const p = pairs[i];
+		if (!p) continue;
 		console.log(
 			`  [${i + 1}] ${p.meta.deviceId}  ${formatSize(p.conflictSize)}  modified ${formatDate(p.conflictMtime)}`,
 		);
 	}
 	console.log("═".repeat(60));
 
-	const choices: Array<{ name: string; value: string }> = [];
+	// Step 1: Choose operation (keeps menu small regardless of conflict count)
+	const mainChoices: Array<{ name: string; value: string }> = [];
 
-	// View diff options
 	if (originalExists) {
+		mainChoices.push({ name: "View diff (pick version next)", value: "act:diff" });
+		mainChoices.push({ name: "Keep original", value: "original" });
+		mainChoices.push({ name: "Keep a conflict version (pick next)", value: "act:keep" });
+		mainChoices.push({
+			name: "Merge remaining via GUI (pick first version next)",
+			value: "act:merge",
+		});
+	} else {
+		// Orphan: only keep options
 		for (let i = 0; i < pairs.length; i++) {
-			choices.push({
-				name: `Diff: original vs conflict #${i + 1} (${pairs[i]!.meta.deviceId})`,
-				value: `diff:${i}`,
+			const p = pairs[i];
+			if (!p) continue;
+			mainChoices.push({
+				name: `Keep conflict #${i + 1} (${p.meta.deviceId})`,
+				value: `conflict:${i}`,
 			});
 		}
 	}
-	if (pairs.length > 1) {
-		choices.push({
-			name: "Diff: conflict #1 vs conflict #2",
-			value: "diff:0vs1",
-		});
-	}
+	mainChoices.push({ name: "Skip", value: "skip" });
+	mainChoices.push({ name: "Quit", value: "quit" });
 
-	// Keep options
-	if (originalExists) {
-		choices.push({ name: "Keep original", value: "original" });
-	}
-	for (let i = 0; i < pairs.length; i++) {
-		choices.push({
-			name: `Keep conflict #${i + 1} (${pairs[i]!.meta.deviceId})`,
-			value: `conflict:${i}`,
-		});
-	}
+	const action = await numberedPrompt(mainChoices);
+	if (!action) return { target: { type: "skip" }, quit: true };
 
-	choices.push({ name: "Skip", value: "skip" });
-	choices.push({ name: "Quit", value: "quit" });
-
-	const { action } = await inquirer.prompt<{
-		action: string;
-	}>([
-		{
-			type: "list",
-			name: "action",
-			message: "Choose action:",
-			choices,
-		},
-	]);
-
-	if (action === "quit") {
-		return { target: { type: "skip" }, quit: true };
-	}
-	if (action === "skip") {
-		return { target: { type: "skip" } };
-	}
-	if (action === "original") {
-		return { target: { type: "original" } };
-	}
+	if (action === "quit") return { target: { type: "skip" }, quit: true };
+	if (action === "skip") return { target: { type: "skip" } };
+	if (action === "original") return { target: { type: "original" } };
 	if (action.startsWith("conflict:")) {
-		const idx = Number.parseInt(action.split(":")[1]!, 10);
-		return { target: { type: "conflict", conflictIndex: idx } };
+		return { target: { type: "conflict", conflictIndex: Number(action.split(":")[1]) } };
 	}
-	if (action.startsWith("diff:")) {
-		const diffArg = action.split(":")[1]!;
-		if (diffArg.includes("vs")) {
-			// diff between two conflict files
-			const [a, b] = diffArg.split("vs").map(Number);
-			return {
-				target: { type: "skip" },
-				viewDiff: true,
-				viewDiffConflictIndex: a,
-			};
+
+	// Step 2: Pick which conflict version
+	if (action === "act:diff" || action === "act:keep" || action === "act:merge") {
+		const versionChoices: Array<{ name: string; value: string }> = [];
+		for (let i = 0; i < pairs.length; i++) {
+			const p = pairs[i];
+			if (!p) continue;
+			versionChoices.push({
+				name: `#${i + 1} ${p.meta.deviceId}  ${formatSize(p.conflictSize)}  ${formatDate(p.conflictMtime)}`,
+				value: `v:${i}`,
+			});
 		}
-		const idx = Number.parseInt(diffArg, 10);
-		return {
-			target: { type: "skip" },
-			viewDiff: true,
-			viewDiffConflictIndex: idx,
-		};
+		versionChoices.push({ name: "Cancel", value: "skip" });
+
+		const choice = await numberedPrompt(versionChoices);
+		if (!choice || choice === "skip") return { target: { type: "skip" } };
+
+		const idx = Number(choice.split(":")[1]);
+		if (action === "act:diff") {
+			return { target: { type: "skip" }, viewDiff: true, viewDiffConflictIndex: idx };
+		}
+		if (action === "act:keep") {
+			return { target: { type: "conflict", conflictIndex: idx } };
+		}
+		if (action === "act:merge") {
+			return { target: { type: "skip" }, mergeConflictIndex: idx };
+		}
 	}
 
 	return { target: { type: "skip" } };
@@ -146,44 +165,42 @@ export async function promptConflictAction(
 
 	console.log("");
 	console.log("═".repeat(60));
-	console.log(
-		`Conflict: ${meta.originalName} (${index + 1}/${total})`,
-	);
+	console.log(`Conflict: ${meta.originalName} (${index + 1}/${total})`);
 	if (!originalExists) {
 		console.log("  ⚠ Original file missing (orphan conflict)");
 	}
-	console.log(
-		`  Original:  ${formatSize(originalSize)}  modified ${formatDate(originalMtime)}`,
-	);
-	console.log(
-		`  Conflict:  ${formatSize(conflictSize)}  modified ${formatDate(conflictMtime)}`,
-	);
+	console.log(`  Original:  ${formatSize(originalSize)}  modified ${formatDate(originalMtime)}`);
+	console.log(`  Conflict:  ${formatSize(conflictSize)}  modified ${formatDate(conflictMtime)}`);
 	console.log("═".repeat(60));
 
-	const { action } = await inquirer.prompt<{
-		action: string;
-	}>([
-		{
-			type: "list",
-			name: "action",
-			message: "Choose action:",
-			choices: [
-				{ name: "View diff", value: "diff" },
-				{ name: "Keep original", value: "original" },
-				{ name: "Keep conflict version", value: "conflict" },
-				{ name: "Keep both", value: "both" },
-				{ name: "Skip", value: "skip" },
-				{ name: "Quit", value: "quit" },
-			],
-		},
-	]);
+	const choices: Array<{ name: string; value: string }> = [];
 
-	if (action === "diff") {
-		return { choice: "skip", viewDiff: true };
+	if (originalExists) {
+		choices.push({ name: "View diff (VS Code)", value: "diff" });
+		choices.push({ name: "Keep original", value: "original" });
 	}
-	if (action === "quit") {
-		return { choice: "skip", quit: true };
+
+	choices.push({
+		name: originalExists ? "Keep conflict version" : "Rename conflict to original",
+		value: "conflict",
+	});
+
+	if (originalExists) {
+		choices.push({ name: "Keep both", value: "both" });
+		choices.push({ name: "Merge remaining via GUI", value: "merge" });
 	}
+
+	choices.push({ name: "Delete conflict file", value: "delete" });
+	choices.push({ name: "Skip", value: "skip" });
+	choices.push({ name: "Quit", value: "quit" });
+
+	const action = await numberedPrompt(choices);
+	if (!action) return { choice: "skip", quit: true };
+
+	if (action === "diff") return { choice: "skip", viewDiff: true };
+	if (action === "quit") return { choice: "skip", quit: true };
+	if (action === "delete") return { choice: "delete" as ResolveChoice };
+	if (action === "merge") return { choice: "merge" as ResolveChoice };
 
 	return { choice: action as ResolveChoice };
 }
@@ -191,21 +208,18 @@ export async function promptConflictAction(
 /**
  * Prompt for auto-resolve strategy confirmation.
  */
-export async function promptAutoConfirm(
-	strategy: string,
-	count: number,
-): Promise<boolean> {
-	const { confirm } = await inquirer.prompt<{
-		confirm: boolean;
-	}>([
-		{
-			type: "confirm",
-			name: "confirm",
-			message: `Auto-resolve ${count} conflict group${count > 1 ? "s" : ""} using "${strategy}" strategy?`,
-			default: false,
-		},
-	]);
-	return confirm;
+export async function promptAutoConfirm(strategy: string, count: number): Promise<boolean> {
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+	return new Promise((resolve) => {
+		rl.question(
+			`Auto-resolve ${count} conflict group${count > 1 ? "s" : ""} using "${strategy}" strategy? (y/N): `,
+			(answer) => {
+				rl.close();
+				resolve(answer.trim().toLowerCase() === "y");
+			},
+		);
+	});
 }
 
 function formatSize(bytes: number): string {

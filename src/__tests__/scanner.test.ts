@@ -14,6 +14,18 @@ function createTestFile(dir: string, name: string, content: string) {
 	return fullPath;
 }
 
+/**
+ * Generate a Syncthing-style conflict filename.
+ * Format: <basename>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<device>.<ext>
+ * E.g., "readme.md" → "readme.sync-conflict-20240115-093000-ABCDEF.md"
+ */
+function conflictName(filename: string, date: string, device: string): string {
+	const dotIdx = filename.lastIndexOf(".");
+	const base = dotIdx >= 0 ? filename.substring(0, dotIdx) : filename;
+	const ext = dotIdx >= 0 ? filename.substring(dotIdx) : "";
+	return `${base}.sync-conflict-${date}-${device}${ext}`;
+}
+
 describe("scanner", () => {
 	beforeEach(() => {
 		testCounter++;
@@ -29,7 +41,7 @@ describe("scanner", () => {
 		createTestFile(TMP_DIR, "readme.md", "original content");
 		createTestFile(
 			TMP_DIR,
-			"readme.md.sync-conflict-20240115-093000-ABCDEF.md",
+			conflictName("readme.md", "20240115-093000", "ABCDEF"),
 			"conflict content",
 		);
 
@@ -43,7 +55,7 @@ describe("scanner", () => {
 	it("detects orphan conflicts (no original)", async () => {
 		createTestFile(
 			TMP_DIR,
-			"notes.txt.sync-conflict-20240320-120000-LMNOP.txt",
+			conflictName("notes.txt", "20240320-120000", "LMNOP"),
 			"orphan conflict",
 		);
 
@@ -56,12 +68,12 @@ describe("scanner", () => {
 		createTestFile(TMP_DIR, "data.json", "{}");
 		createTestFile(
 			TMP_DIR,
-			"data.json.sync-conflict-20240101-100000-AAA.json",
+			conflictName("data.json", "20240101-100000", "AAA"),
 			"v1",
 		);
 		createTestFile(
 			TMP_DIR,
-			"data.json.sync-conflict-20240102-100000-BBB.json",
+			conflictName("data.json", "20240102-100000", "BBB"),
 			"v2",
 		);
 
@@ -77,7 +89,7 @@ describe("scanner", () => {
 		createTestFile(sub, "readme.md", "original");
 		createTestFile(
 			sub,
-			"readme.md.sync-conflict-20240115-093000-ABCDEF.md",
+			conflictName("readme.md", "20240115-093000", "ABCDEF"),
 			"conflict",
 		);
 
@@ -90,9 +102,9 @@ describe("scanner", () => {
 
 	it("sorts by name", async () => {
 		createTestFile(TMP_DIR, "a.txt", "a");
-		createTestFile(TMP_DIR, "a.txt.sync-conflict-20240102-100000-AAA.txt", "ac");
+		createTestFile(TMP_DIR, conflictName("a.txt", "20240102-100000", "AAA"), "ac");
 		createTestFile(TMP_DIR, "b.txt", "b");
-		createTestFile(TMP_DIR, "b.txt.sync-conflict-20240101-100000-BBB.txt", "bc");
+		createTestFile(TMP_DIR, conflictName("b.txt", "20240101-100000", "BBB"), "bc");
 
 		const pairs = await scanConflicts({ directory: TMP_DIR, sort: "name" });
 		expect(pairs.length).toBe(2);
@@ -116,9 +128,9 @@ describe("groupByDirectory", () => {
 		const sub1 = join(TMP_DIR, "dir1");
 		const sub2 = join(TMP_DIR, "dir2");
 		createTestFile(sub1, "f1.txt", "orig1");
-		createTestFile(sub1, "f1.txt.sync-conflict-20240101-100000-AAA.txt", "c1");
+		createTestFile(sub1, conflictName("f1.txt", "20240101-100000", "AAA"), "c1");
 		createTestFile(sub2, "f2.txt", "orig2");
-		createTestFile(sub2, "f2.txt.sync-conflict-20240102-100000-BBB.txt", "c2");
+		createTestFile(sub2, conflictName("f2.txt", "20240102-100000", "BBB"), "c2");
 
 		const pairs = await scanConflicts({ directory: TMP_DIR });
 		const groups = groupByDirectory(pairs);

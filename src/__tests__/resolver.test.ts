@@ -15,8 +15,10 @@ function makePair(
 	deviceId = "ABCDEF",
 	conflictDate = new Date(2024, 0, 15, 9, 30, 0),
 ): ConflictPair {
-	const ext = filename.substring(filename.lastIndexOf("."));
-	const conflictName = `${filename}.sync-conflict-${formatDateForFilename(conflictDate)}-${deviceId}${ext}`;
+	const dotIdx = filename.lastIndexOf(".");
+	const base = dotIdx >= 0 ? filename.substring(0, dotIdx) : filename;
+	const ext = dotIdx >= 0 ? filename.substring(dotIdx) : "";
+	const conflictName = `${base}.sync-conflict-${formatDateForFilename(conflictDate)}-${deviceId}${ext}`;
 	const conflictPath = join(dir, conflictName);
 	const originalPath = join(dir, filename);
 

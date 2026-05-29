@@ -6,7 +6,7 @@ import { copyFileSync, mkdirSync, renameSync, unlinkSync, existsSync } from "nod
 import { dirname, join } from "node:path";
 import type { ConflictPair } from "./scanner.js";
 
-export type ResolveChoice = "original" | "conflict" | "both" | "skip";
+export type ResolveChoice = "original" | "conflict" | "both" | "skip" | "delete" | "merge";
 
 /**
  * When multiple conflicts exist for the same original,
@@ -156,6 +156,10 @@ export function resolveConflict(
 				return keepBoth(pair);
 			case "skip":
 				return { pair, choice, success: true };
+			case "delete":
+				return deleteConflict(pair, backup, backupDir);
+			case "merge":
+				return { pair, choice: "merge", success: true };
 		}
 	} catch (err) {
 		return {
@@ -217,6 +221,22 @@ function keepBoth(pair: ConflictPair): ResolveResult {
 	}
 
 	return { pair, choice: "both", success: true };
+}
+
+function deleteConflict(
+	pair: ConflictPair,
+	backup: boolean,
+	backupDir?: string,
+): ResolveResult {
+	const conflictPath = pair.meta.conflictPath;
+
+	if (backup) {
+		backupFile(conflictPath, backupDir);
+	}
+
+	unlinkSync(conflictPath);
+
+	return { pair, choice: "delete", success: true };
 }
 
 /**

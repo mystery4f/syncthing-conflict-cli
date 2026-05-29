@@ -2,11 +2,12 @@
  * Parse Syncthing conflict file names.
  *
  * Conflict file format:
- *   <filename>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<device-id>.<ext>
+ *   <basename>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<device-id>.<ext>
  *
- * The conflict suffix is inserted between the original filename and its extension.
- * Example: readme.md → readme.md.sync-conflict-20240115-093000-ABCDEF.md
- *          my.config.yaml → my.config.yaml.sync-conflict-20240601-120000-XYZ.yaml
+ * The conflict suffix is inserted between the base name and the extension.
+ * Example: readme.md → readme.sync-conflict-20240115-093000-ABCDEF.md
+ *          settings.json → settings.sync-conflict-20260529-184609-B2CA6OC.json
+ *          my.config.yaml → my.config.sync-conflict-20240601-120000-XYZ.yaml
  */
 
 export interface ConflictMeta {
@@ -46,29 +47,7 @@ export function parseConflictPath(conflictPath: string): ConflictMeta | null {
 
 	const [, nameWithExt, dateStr, timeStr, deviceId, ext] = match;
 
-	// The original filename is nameWithExt + ext
-	// e.g., nameWithExt="readme.md", ext=".md" → original="readme.md.md"? NO!
-	//
-	// Actually the format is: <origname>.sync-conflict-...-<device>.<origext>
-	// So nameWithExt IS the original full name (without ext), and ext is appended.
-	// But wait: readme.md.sync-conflict-...-ABCDEF.md
-	//   nameWithExt = "readme.md", ext = ".md"
-	//   original = "readme.md" (not "readme.md.md")
-	//
-	// The key insight: the conflict suffix is inserted BEFORE the final extension.
-	// So the format is really: <name_without_ext>.sync-conflict-...-<device>.<ext>
-	// where <name_without_ext> might contain dots (like "readme.md" → nameWithoutExt="readme", ext=".md")
-	//
-	// But in practice, Syncthing inserts the suffix after the full filename:
-	//   readme.md → readme.md.sync-conflict-20240115-093000-ABCDEF.md
-	// So we have: fullname="readme.md", suffix=".sync-conflict-20240115-093000-ABCDEF", ext=".md"
-	// The original name is just nameWithExt (which already includes the original extension).
-	//
-	// Wait no: the regex captures nameWithExt="readme.md" and ext=".md"
-	// So originalName = nameWithExt = "readme.md"
-	// The ext captured is the REPEATED extension after the device ID.
-
-	const originalName = nameWithExt;
+	const originalName = nameWithExt + ext;
 
 	// Construct original path
 	const dir = extractDir(conflictPath);
