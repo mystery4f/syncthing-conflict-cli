@@ -1,5 +1,22 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-*.tgz
+
+# Tauri
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
 .stc-backup/
+
+# Example / test data
 example/

@@ -1,0 +1,23 @@
+[package]
+name = "syncthing-conflict-gui"
+version = "2.0.0"
+description = "Desktop GUI for resolving Syncthing conflict files"
+authors = ["mystery4f"]
+edition = "2021"
+
+[lib]
+name = "syncthing_conflict_gui_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+diff = "0.1"
