@@ -14,6 +14,21 @@ npm install -g syncthing-conflict-cli
 npx syncthing-conflict-cli <command>
 ```
 
+或从本地源码全局安装（链接方式，改代码后 `npm run build` 即时生效，无需重装）：
+
+```bash
+git clone https://github.com/<you>/syncthing-conflict-cli.git
+cd syncthing-conflict-cli
+pnpm install
+pnpm build
+npm install -g .
+
+# 之后全局可用 stc 命令
+stc --version
+```
+
+卸载：`npm uninstall -g syncthing-conflict-cli`
+
 ## 快速开始
 
 ```bash
