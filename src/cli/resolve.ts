@@ -17,7 +17,7 @@ import {
 	type ScanOptions,
 	scanConflicts,
 } from "../core/scanner.js";
-import { mergeWithIdea, resolveIdeaCommand, viewDiffExternal } from "../ui/diff-viewer.js";
+import { mergeWithIdea, mergeWithStcMerge, resolveIdeaCommand, resolveStcMergeCommand, viewDiffExternal } from "../ui/diff-viewer.js";
 import { promptConflictAction, promptGroupAction } from "../ui/prompts.js";
 
 export function registerResolveCommand(program: Command): void {
@@ -39,6 +39,8 @@ interface ResolveCommandOptions {
 	exclude?: string;
 	depth?: number;
 	diffTool?: string;
+	/** Native stc-merge dialog detected */
+	stcMerge?: boolean;
 	/** Set once before the interactive loop: IDEA CLI detected */
 	ideaMerge?: boolean;
 }
@@ -57,6 +59,7 @@ async function runResolve(directory: string, options: ResolveCommandOptions): Pr
 
 	// IDEA merge available whenever the IDEA CLI launcher is detected (no flag needed)
 	options.ideaMerge = resolveIdeaCommand() !== null;
+	options.stcMerge = resolveStcMergeCommand() !== null;
 
 	const pairs = await scanConflicts(scanOptions);
 
@@ -120,6 +123,7 @@ const MERGE_PENDING = "<<< stc: accept a side or edit below, then click Apply >>
  */
 async function mergeIdeaSession(
 	pairs: ConflictPair[],
+	tool: "idea" | "stc",
 ): Promise<{ resolved: number; skipped: number }> {
 	let resolved = 0;
 	let skipped = 0;
@@ -131,14 +135,14 @@ async function mergeIdeaSession(
 			continue;
 		}
 		console.log(chalk.bold(`\nMerging ${i + 1}/${pairs.length}: ${pair.meta.originalName}`));
-		const applied = await mergeIdeaPair(pair);
+		const applied = await mergeIdeaPair(pair, tool);
 		if (applied) resolved++;
 		else skipped++;
 	}
 	return { resolved, skipped };
 }
 
-async function mergeIdeaPair(pair: ConflictPair): Promise<boolean> {
+async function mergeIdeaPair(pair: ConflictPair, tool: "idea" | "stc"): Promise<boolean> {
 	const mergedPath = `${pair.meta.originalPath}.stc-merged`;
 	writeFileSync(mergedPath, MERGE_PENDING);
 
@@ -157,7 +161,11 @@ async function mergeIdeaPair(pair: ConflictPair): Promise<boolean> {
 	});
 
 	const mergeSignal = (async (): Promise<string | null> => {
-		await mergeWithIdea(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
+		if (tool === "idea") {
+			await mergeWithIdea(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
+		} else {
+			await mergeWithStcMerge(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
+		}
 		// IDEA skips writing when the result document is unmodified (e.g. accept-left
 		// on an output seeded with the original), so seed a marker instead: any
 		// Apply must write something different from it.
@@ -229,6 +237,7 @@ async function handleSinglePair(
 			groupIndex,
 			totalGroups,
 			options.ideaMerge === true,
+			options.stcMerge === true,
 		);
 
 		if (action.quit) return { status: "quit" };
@@ -241,10 +250,21 @@ async function handleSinglePair(
 
 		if (action.ideaMerge) {
 			const sessionPairs = orderPairsForGuiSession(remainingPairs, pair);
-			const mergeResult = await mergeIdeaSession(sessionPairs);
+			const mergeResult = await mergeIdeaSession(sessionPairs, "idea");
 			console.log(
 				chalk.green(
 					`✓ IDEA merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
+				),
+			);
+			return { status: "gui", resolved: mergeResult.resolved, skipped: mergeResult.skipped };
+		}
+
+		if (action.stcMerge) {
+			const sessionPairs = orderPairsForGuiSession(remainingPairs, pair);
+			const mergeResult = await mergeIdeaSession(sessionPairs, "stc");
+			console.log(
+				chalk.green(
+					`✓ stc-merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
 				),
 			);
 			return { status: "gui", resolved: mergeResult.resolved, skipped: mergeResult.skipped };
@@ -285,6 +305,7 @@ async function handleGroup(
 			groupIndex,
 			totalGroups,
 			options.ideaMerge === true,
+			options.stcMerge === true,
 		);
 
 		if (action.quit) return { status: "quit" };
@@ -303,10 +324,29 @@ async function handleGroup(
 			const ideaPair = pairs[action.ideaMergeConflictIndex];
 			if (ideaPair) {
 				const sessionPairs = orderPairsForGuiSession(remainingPairs, ideaPair);
-				const mergeResult = await mergeIdeaSession(sessionPairs);
+				const mergeResult = await mergeIdeaSession(sessionPairs, "idea");
 				console.log(
 					chalk.green(
 						`✓ IDEA merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
+					),
+				);
+				return {
+					status: "gui",
+					resolved: mergeResult.resolved,
+					skipped: mergeResult.skipped,
+				};
+			}
+			continue;
+		}
+
+		if (action.stcMergeConflictIndex !== undefined) {
+			const stcPair = pairs[action.stcMergeConflictIndex];
+			if (stcPair) {
+				const sessionPairs = orderPairsForGuiSession(remainingPairs, stcPair);
+				const mergeResult = await mergeIdeaSession(sessionPairs, "stc");
+				console.log(
+					chalk.green(
+						`✓ stc-merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
 					),
 				);
 				return {

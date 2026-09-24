@@ -77,6 +77,24 @@ export function resolveIdeaCommand(): string | null {
 }
 
 /**
+ * Native stc merge dialog (stc-merge) — installed to ~/.stc/bin or PATH.
+ */
+export function resolveStcMergeCommand(): string | null {
+	const candidates = [
+		`${(process.env.USERPROFILE ?? "").replace(/\\/g, "/")}/.stc/bin/stc-merge.exe`,
+		"C:/stc/bin/stc-merge.exe",
+	];
+	const hit = fg.sync(candidates, { onlyFiles: true })[0];
+	if (hit) return `"${hit}"`;
+	try {
+		execSync(`${process.platform === "win32" ? "where" : "which"} stc-merge`, { stdio: "ignore" });
+		return "stc-merge";
+	} catch {
+		return null;
+	}
+}
+
+/**
  * View diff using an external tool. `idea` is shorthand for the IDEA CLI diff.
  */
 export function viewDiffExternal(
@@ -129,6 +147,30 @@ export async function mergeWithIdea(
 		});
 	} catch (err) {
 		console.error("Failed to launch IDEA merge");
+		console.error(err);
+	}
+}
+
+/**
+ * Launch the native stc-merge dialog. Same contract as mergeWithIdea: the
+ * caller seeds the output and waits for the result file to change.
+ */
+export async function mergeWithStcMerge(
+	originalPath: string,
+	conflictPath: string,
+	outputPath: string,
+): Promise<void> {
+	const launcher = resolveStcMergeCommand();
+	if (!launcher) {
+		console.error("stc-merge not found (expected in %USERPROFILE%\\.stc\\bin or PATH)");
+		return;
+	}
+	try {
+		execSync(`${launcher} "${originalPath}" "${conflictPath}" "${originalPath}" "${outputPath}"`, {
+			stdio: "inherit",
+		});
+	} catch (err) {
+		console.error("Failed to launch stc-merge");
 		console.error(err);
 	}
 }

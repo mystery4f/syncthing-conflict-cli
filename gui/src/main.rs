@@ -56,12 +56,16 @@ fn read_lines(p: &str) -> Vec<String> {
 
 impl MergeApp {
     fn new(left: &str, right: &str, base: &str, out_path: String) -> Self {
-        let left_lines = read_lines(left);
+        let _left_lines = read_lines(left);
         let right_lines = read_lines(right);
         let base_lines = read_lines(base);
 
         // 与 IDEA 集成一致：base 即「您的版本」一侧的公共祖先（stc 传入 original）
-        let diff = TextDiff::from_lines(&base_lines, &right_lines);
+        let base_str = base_lines.join("
+");
+        let right_str = right_lines.join("
+");
+        let diff = TextDiff::from_lines(&base_str, &right_str);
 
         let mut rows: Vec<Row> = Vec::new();
         let mut regions: Vec<Region> = Vec::new();
@@ -69,91 +73,87 @@ impl MergeApp {
         let mut right_num = 1usize;
 
         for op in diff.ops() {
-            match op.tag() {
+            let (tag, old_range, new_range) = op.as_tag_tuple();
+            match tag {
                 similar::DiffTag::Equal => {
-                    let (o, n, len) = (op.old_index(), op.new_index(), op.old_len());
-                    for k in 0..len {
-                        let text = base_lines[o + k].clone();
+                    for k in 0..old_range.len() {
+                        let text = base_lines[old_range.start + k].clone();
                         rows.push(Row {
                             left: format!("{:>6}  {}", left_num, text),
-                            left_num: None,
                             right: format!("{:>6}  {}", right_num, text),
-                            right_num: None,
                             center: text.clone(),
                             center_num: Some(left_num),
                             region: None,
                             btn: false,
                             changed: false,
+                            left_num: None,
+                            right_num: None,
                         });
                         left_num += 1;
                         right_num += 1;
                     }
                 }
                 similar::DiffTag::Delete => {
-                    let (o, len) = (op.old_index(), op.old_len());
                     let idx = regions.len();
                     regions.push(Region { state: RegionState::Pending });
-                    for k in 0..len {
-                        let text = base_lines[o + k].clone();
+                    for k in 0..old_range.len() {
+                        let text = base_lines[old_range.start + k].clone();
                         rows.push(Row {
                             left: format!("{:>6}  {}", left_num, text),
-                            left_num: None,
                             right: String::new(),
-                            right_num: None,
                             center: text.clone(),
                             center_num: Some(left_num),
                             region: Some(idx),
                             btn: k == 0,
                             changed: true,
+                            left_num: None,
+                            right_num: None,
                         });
                         left_num += 1;
                     }
                 }
                 similar::DiffTag::Insert => {
-                    let (n_idx, n_len) = (op.new_index(), op.new_len());
                     let idx = regions.len();
                     regions.push(Region { state: RegionState::Pending });
-                    for k in 0..n_len {
-                        let text = right_lines[n_idx + k].clone();
+                    for k in 0..new_range.len() {
+                        let text = right_lines[new_range.start + k].clone();
                         rows.push(Row {
                             left: String::new(),
-                            left_num: None,
                             right: format!("{:>6}  {}", right_num, text),
-                            right_num: None,
                             center: String::new(),
                             center_num: None,
                             region: Some(idx),
                             btn: k == 0,
                             changed: true,
+                            left_num: None,
+                            right_num: None,
                         });
                         right_num += 1;
                     }
                 }
                 similar::DiffTag::Replace => {
-                    let (o, o_len, n_idx, n_len) =
-                        (op.old_index(), op.old_len(), op.new_index(), op.new_len());
                     let idx = regions.len();
                     regions.push(Region { state: RegionState::Pending });
-                    let total = o_len.max(n_len);
+                    let total = old_range.len().max(new_range.len());
                     for k in 0..total {
-                        let l_txt = base_lines.get(o + k).cloned().unwrap_or_default();
-                        let r_txt = right_lines.get(n_idx + k).cloned().unwrap_or_default();
-                        let ln = if k < o_len { Some(left_num + k) } else { None };
-                        let rn = if k < n_len { Some(right_num + k) } else { None };
+                        let l_txt = base_lines.get(old_range.start + k).cloned().unwrap_or_default();
+                        let r_txt = right_lines.get(new_range.start + k).cloned().unwrap_or_default();
+                        let ln = if k < old_range.len() { Some(left_num + k) } else { None };
+                        let rn = if k < new_range.len() { Some(right_num + k) } else { None };
                         rows.push(Row {
                             left: ln.map(|n| format!("{:>6}  {}", n, l_txt)).unwrap_or_default(),
-                            left_num: None,
                             right: rn.map(|n| format!("{:>6}  {}", n, r_txt)).unwrap_or_default(),
-                            right_num: None,
                             center: l_txt.clone(),
-                            center_num: if k < o_len { Some(left_num + k) } else { None },
+                            center_num: ln,
                             region: Some(idx),
                             btn: k == 0,
                             changed: true,
+                            left_num: None,
+                            right_num: None,
                         });
                     }
-                    left_num += o_len;
-                    right_num += n_len;
+                    left_num += old_range.len();
+                    right_num += new_range.len();
                 }
             }
         }
@@ -261,20 +261,25 @@ impl eframe::App for MergeApp {
                 let col = (avail - 24.0) / 3.0;
                 let row_h = 22.0;
                 egui::ScrollArea::vertical()
-                    .id_source("merge")
+                    .id_salt("merge")
                     .auto_shrink([false, false])
                     .show_rows(ui, row_h, self.rows.len(), |ui, range| {
                         for ri in range {
-                            let row = &self.rows[ri];
-                            let region_idx = row.region;
-                            let state = region_idx.and_then(|i| self.regions.get(i)).map(|r| r.state);
+                            let (left_txt, right_txt, center_txt, region_idx, btn, changed) = {
+                                let row = &self.rows[ri];
+                                (row.left.clone(), row.right.clone(), row.center.clone(), row.region, row.btn, row.changed)
+                            };
+                            let region_pending = region_idx
+                                .and_then(|i| self.regions.get(i))
+                                .map(|r| r.state == RegionState::Pending)
+                                .unwrap_or(false);
                             ui.horizontal(|ui| {
                                 // 左栏
                                 ui.allocate_ui(egui::vec2(col, row_h), |ui| {
                                     ui.set_width(col);
                                     ui.add(
-                                        egui::Label::new(egui::RichText::new(&row.left).monospace().size(13.0).color(
-                                            if row.changed { egui::Color32::from_rgb(0xf4, 0x87, 0x71) } else { egui::Color32::from_rgb(0xd4, 0xd4, 0xd4) },
+                                        egui::Label::new(egui::RichText::new(&left_txt).monospace().size(13.0).color(
+                                            if changed { egui::Color32::from_rgb(0xf4, 0x87, 0x71) } else { egui::Color32::from_rgb(0xd4, 0xd4, 0xd4) },
                                         ))
                                         .truncate(),
                                     );
@@ -283,7 +288,7 @@ impl eframe::App for MergeApp {
                                 ui.allocate_ui(egui::vec2(col, row_h), |ui| {
                                     ui.set_width(col);
                                     ui.horizontal(|ui| {
-                                        if let (Some(rid), true) = (region_idx, row.btn) {
+                                        if let (Some(rid), true) = (region_idx, btn) {
                                             if ui.add_sized([18.0, 18.0], egui::Button::new("\u{ab}"))
                                                 .on_hover_text("保留左侧 (1)")
                                                 .clicked()
@@ -296,19 +301,19 @@ impl eframe::App for MergeApp {
                                             {
                                                 self.set_region(rid, RegionState::Right);
                                             }
-                                        } else if let (Some(rid), false) = (region_idx, row.btn) {
-                                            if self.regions.get(rid).map(|r| r.state) == Some(RegionState::Pending) && row.changed {
+                                        } else if let (Some(_rid), false) = (region_idx, btn) {
+                                            if region_pending && changed {
                                                 ui.label(egui::RichText::new("·").small().weak());
                                             }
                                         }
                                         if region_idx.is_none() {
                                             ui.add(
                                                 egui::Label::new(
-                                                    egui::RichText::new(&row.center).monospace().size(13.0),
+                                                    egui::RichText::new(&center_txt).monospace().size(13.0),
                                                 )
                                                 .truncate(),
                                             );
-                                        } else if row.btn {
+                                        } else if btn {
                                             ui.add(
                                                 egui::TextEdit::singleline(&mut self.rows[ri].center)
                                                     .desired_width(f32::INFINITY)
@@ -321,8 +326,8 @@ impl eframe::App for MergeApp {
                                 ui.allocate_ui(egui::vec2(col, row_h), |ui| {
                                     ui.set_width(col);
                                     ui.add(
-                                        egui::Label::new(egui::RichText::new(&row.right).monospace().size(13.0).color(
-                                            if row.changed { egui::Color32::from_rgb(0x4e, 0xc9, 0xb0) } else { egui::Color32::from_rgb(0xd4, 0xd4, 0xd4) },
+                                        egui::Label::new(egui::RichText::new(&right_txt).monospace().size(13.0).color(
+                                            if changed { egui::Color32::from_rgb(0x4e, 0xc9, 0xb0) } else { egui::Color32::from_rgb(0xd4, 0xd4, 0xd4) },
                                         ))
                                         .truncate(),
                                     );
@@ -348,5 +353,5 @@ fn main() -> eframe::Result {
             .with_title(format!("合并冲突 — {}", app.orig_path)),
         ..Default::default()
     };
-    eframe::run_native("stc-merge", options, Box::new(move |_cc| Box::new(app)))
+    eframe::run_native("stc-merge", options, Box::new(move |_cc| Ok(Box::new(app))))
 }
