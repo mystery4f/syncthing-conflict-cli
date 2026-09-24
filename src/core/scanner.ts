@@ -42,6 +42,7 @@ export async function scanConflicts(options: ScanOptions): Promise<ConflictPair[
 
 	const fgOptions: fg.Options = {
 		cwd: directory,
+		dot: true,
 		absolute: true,
 		onlyFiles: true,
 		ignore: exclude?.map((p) => `**/${p}/**`) ?? [],
