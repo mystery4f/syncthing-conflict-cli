@@ -4,3 +4,4 @@ dist/
 .stc-backup/
 example/
 src/__tests__/__tmp_resolver_test__/
+gui/target/

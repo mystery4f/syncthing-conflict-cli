@@ -1,0 +1,17 @@
+# Rust GUI（stc-merge）cargo 配置
+# 当前网络对 crates.io 需走代理；重试时执行：
+#   cd gui && HTTPS_PROXY=http://mcr:4444 HTTP_PROXY=http://mcr:4444 cargo build --release
+# 若 schannel 握手失败，保留 check-revoke=false；若仍超时，改用 rsproxy sparse：
+#   [source.crates-io] replace-with = "rsproxy-sparse"
+#   [source.rsproxy-sparse] registry = "sparse+https://rsproxy.cn/index/"
+[source.crates-io]
+registry = "sparse+https://index.crates.io/"
+
+[http]
+low-speed-limit = 0
+check-revoke = false
+multiplexing = false
+timeout = 300
+
+[net]
+retry = 5

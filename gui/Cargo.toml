@@ -1,0 +1,11 @@
+[package]
+name = "stc-merge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.29"
+similar = "2.6"
+
+[profile.release]
+opt-level = 2
