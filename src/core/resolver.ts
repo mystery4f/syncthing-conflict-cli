@@ -6,7 +6,7 @@ import { copyFileSync, mkdirSync, renameSync, unlinkSync, existsSync } from "nod
 import { dirname, join } from "node:path";
 import type { ConflictPair } from "./scanner.js";
 
-export type ResolveChoice = "original" | "conflict" | "both" | "skip" | "delete" | "merge";
+export type ResolveChoice = "original" | "conflict" | "both" | "skip" | "delete";
 
 /**
  * When multiple conflicts exist for the same original,
@@ -158,8 +158,6 @@ export function resolveConflict(
 				return { pair, choice, success: true };
 			case "delete":
 				return deleteConflict(pair, backup, backupDir);
-			case "merge":
-				return { pair, choice: "merge", success: true };
 		}
 	} catch (err) {
 		return {

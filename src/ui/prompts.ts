@@ -19,7 +19,6 @@ export interface GroupPromptAction {
 	target: GroupTarget;
 	viewDiff?: boolean;
 	viewDiffConflictIndex?: number;
-	mergeConflictIndex?: number;
 	ideaMergeConflictIndex?: number;
 	quit?: boolean;
 }
@@ -100,10 +99,6 @@ export async function promptGroupAction(
 		if (ideaMerge) {
 			mainChoices.push({ name: "Merge in IDEA (pick version next)", value: "act:idea-merge" });
 		}
-		mainChoices.push({
-			name: "Merge via browser GUI (pick first version next)",
-			value: "act:merge",
-		});
 	} else {
 		// Orphan: only keep options
 		for (let i = 0; i < pairs.length; i++) {
@@ -151,9 +146,6 @@ export async function promptGroupAction(
 		if (action === "act:keep") {
 			return { target: { type: "conflict", conflictIndex: idx } };
 		}
-		if (action === "act:merge") {
-			return { target: { type: "skip" }, mergeConflictIndex: idx };
-		}
 		if (action === "act:idea-merge") {
 			return { target: { type: "skip" }, ideaMergeConflictIndex: idx };
 		}
@@ -198,7 +190,6 @@ export async function promptConflictAction(
 	if (originalExists) {
 		choices.push({ name: "Keep both", value: "both" });
 		if (ideaMerge) choices.push({ name: "Merge in IDEA", value: "idea-merge" });
-		choices.push({ name: "Merge via browser GUI", value: "merge" });
 	}
 
 	choices.push({ name: "Delete conflict file", value: "delete" });
@@ -211,7 +202,6 @@ export async function promptConflictAction(
 	if (action === "diff") return { choice: "skip", viewDiff: true };
 	if (action === "quit") return { choice: "skip", quit: true };
 	if (action === "delete") return { choice: "delete" as ResolveChoice };
-	if (action === "merge") return { choice: "merge" as ResolveChoice };
 	if (action === "idea-merge") return { choice: "skip", ideaMerge: true };
 
 	return { choice: action as ResolveChoice };

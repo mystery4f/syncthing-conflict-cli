@@ -18,7 +18,6 @@ import {
 	scanConflicts,
 } from "../core/scanner.js";
 import { mergeWithIdea, resolveIdeaCommand, viewDiffExternal } from "../ui/diff-viewer.js";
-import { mergeGuiSession } from "../ui/merger.js";
 import { promptConflictAction, promptGroupAction } from "../ui/prompts.js";
 
 export function registerResolveCommand(program: Command): void {
@@ -256,21 +255,6 @@ async function handleSinglePair(
 			return { status: "skipped" };
 		}
 
-		if (action.choice === "merge") {
-			const sessionPairs = orderPairsForGuiSession(remainingPairs, pair);
-			const mergeResult = await mergeGuiSession(sessionPairs);
-			console.log(
-				chalk.green(
-					`✓ GUI session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
-				),
-			);
-			return {
-				status: "gui",
-				resolved: mergeResult.resolved,
-				skipped: mergeResult.skipped,
-				error: mergeResult.error,
-			};
-		}
 
 		const result = resolveConflict(pair, action.choice);
 		if (result.success) {
@@ -334,25 +318,6 @@ async function handleGroup(
 			continue;
 		}
 
-		if (action.mergeConflictIndex !== undefined) {
-			const mergePair = pairs[action.mergeConflictIndex];
-			if (mergePair) {
-				const sessionPairs = orderPairsForGuiSession(remainingPairs, mergePair);
-				const mergeResult = await mergeGuiSession(sessionPairs);
-				console.log(
-					chalk.green(
-						`✓ GUI session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
-					),
-				);
-				return {
-					status: "gui",
-					resolved: mergeResult.resolved,
-					skipped: mergeResult.skipped,
-					error: mergeResult.error,
-				};
-			}
-			continue;
-		}
 
 		if (action.target.type === "skip") {
 			console.log(chalk.gray("Skipped."));
