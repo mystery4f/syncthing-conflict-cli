@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { readFileSync, unlinkSync } from "node:fs";
+import { copyFileSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSideBySideDiff } from "../core/differ.js";
@@ -109,38 +109,108 @@ async function runResolve(directory: string, options: ResolveCommandOptions): Pr
 	console.log(chalk.bold(`\nDone! Resolved ${resolved}, skipped ${skipped}.`));
 }
 
+const MERGE_PENDING = "<<< stc: accept a side or edit below, then click Apply >>>\n";
+
 /**
- * Open IDEA's merge tool for one conflict pair and apply the result:
- * merged content replaces the original file, the conflict file is removed
- * (both backed up first).
+ * IDEA merge session: walk through pairs one by one. Each pair opens a merge
+ * window pre-seeded with the original; when the user clicks Apply (mtime bump
+ * — even if the result equals the original, e.g. accept-left) the merged
+ * content is written back and the conflict removed. Enter in the terminal
+ * skips the current pair; closing the window without applying waits for a
+ * decision, with a 10-minute cap per pair.
  */
-async function runIdeaMerge(pair: ConflictPair): Promise<void> {
+async function mergeIdeaSession(
+	pairs: ConflictPair[],
+): Promise<{ resolved: number; skipped: number }> {
+	let resolved = 0;
+	let skipped = 0;
+
+	for (let i = 0; i < pairs.length; i++) {
+		const pair = pairs[i];
+		if (!pair?.originalExists) {
+			skipped++;
+			continue;
+		}
+		console.log(chalk.bold(`\nMerging ${i + 1}/${pairs.length}: ${pair.meta.originalName}`));
+		const applied = await mergeIdeaPair(pair);
+		if (applied) resolved++;
+		else skipped++;
+	}
+	return { resolved, skipped };
+}
+
+async function mergeIdeaPair(pair: ConflictPair): Promise<boolean> {
 	const mergedPath = `${pair.meta.originalPath}.stc-merged`;
+	writeFileSync(mergedPath, MERGE_PENDING);
+
 	console.log(
 		chalk.gray(
-			"Opening IDEA merge — edit the middle result pane, click 应用 (Apply) to save.",
-			"stc 自动等待合并结果（最多 10 分钟，Ctrl+C 放弃）"
+			"中间结果栏首行是 stc 占位标记：接受任一侧或编辑掉它 → 点「应用」保存；Enter = 跳过此文件。",
 		),
 	);
-	const merged = await mergeWithIdea(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
-	if (merged === null) {
-		console.log(chalk.gray("No merge result within 10 minutes — skipped (conflict kept)."));
-	} else if (merged === readFileSync(pair.meta.originalPath, "utf8")) {
-		console.log(chalk.gray("Result identical to original — nothing merged (conflict kept)."));
-	} else {
+
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	const skipSignal = new Promise<string>((resolve) => {
+		rl.question("(Enter = skip this file) ", () => {
+			rl.close();
+			resolve("skip");
+		});
+	});
+
+	const mergeSignal = (async (): Promise<string | null> => {
+		await mergeWithIdea(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
+		// IDEA skips writing when the result document is unmodified (e.g. accept-left
+		// on an output seeded with the original), so seed a marker instead: any
+		// Apply must write something different from it.
+		for (let i = 0; i < 1200; i++) {
+			try {
+				const content = readFileSync(mergedPath, "utf8");
+				if (content !== MERGE_PENDING) {
+					rl.close();
+					return content;
+				}
+			} catch {
+				// briefly locked mid-write — keep polling
+			}
+			await new Promise((resolve) => setTimeout(resolve, 400));
+		}
+		rl.close();
+		return null;
+	})();
+
+	const outcome = await Promise.race([
+		mergeSignal.then((content) => ({ kind: "applied" as const, content })),
+		skipSignal.then(() => ({ kind: "skip" as const, content: null })),
+	]);
+
+	rl.close();
+	let applied = false;
+	if (outcome.kind === "applied" && outcome.content !== null) {
 		const result = applyMergedPair(pair, mergedPath);
 		if (result.success) {
-			console.log(chalk.green("✓ Merged content saved to original, conflict file removed"));
+			applied = true;
+			const keptOriginal = readFileSync(pair.meta.originalPath, "utf8") === outcome.content;
+			console.log(
+				chalk.green(
+					keptOriginal
+						? "✓ Resolved: kept original content (accept-left), conflict file removed"
+						: "✓ Resolved: merged content saved, conflict file removed",
+				),
+			);
 		} else {
 			console.log(chalk.red(`✗ Failed to apply merge: ${result.error}`));
 		}
+	} else {
+		console.log(chalk.gray("Skipped — conflict kept."));
 	}
 	try {
 		unlinkSync(mergedPath);
 	} catch {
 		// cleanup best-effort
 	}
+	return applied;
 }
+
 
 async function handleSinglePair(
 	pair: ConflictPair,
@@ -171,8 +241,14 @@ async function handleSinglePair(
 		}
 
 		if (action.ideaMerge) {
-			await runIdeaMerge(pair);
-			continue;
+			const sessionPairs = orderPairsForGuiSession(remainingPairs, pair);
+			const mergeResult = await mergeIdeaSession(sessionPairs);
+			console.log(
+				chalk.green(
+					`✓ IDEA merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
+				),
+			);
+			return { status: "gui", resolved: mergeResult.resolved, skipped: mergeResult.skipped };
 		}
 
 		if (action.choice === "skip") {
@@ -241,7 +317,20 @@ async function handleGroup(
 
 		if (action.ideaMergeConflictIndex !== undefined) {
 			const ideaPair = pairs[action.ideaMergeConflictIndex];
-			if (ideaPair) await runIdeaMerge(ideaPair);
+			if (ideaPair) {
+				const sessionPairs = orderPairsForGuiSession(remainingPairs, ideaPair);
+				const mergeResult = await mergeIdeaSession(sessionPairs);
+				console.log(
+					chalk.green(
+						`✓ IDEA merge session ended: resolved ${mergeResult.resolved}, skipped ${mergeResult.skipped}`,
+					),
+				);
+				return {
+					status: "gui",
+					resolved: mergeResult.resolved,
+					skipped: mergeResult.skipped,
+				};
+			}
 			continue;
 		}
 

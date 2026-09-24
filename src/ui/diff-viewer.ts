@@ -105,29 +105,25 @@ export function viewDiffExternal(
 }
 
 /**
- * Open IDEA's merge tool (original vs conflict). Returns the merged result
- * written by IDEA when the user clicks Apply, or null if nothing was produced.
+ * Launch IDEA's merge tool (original vs conflict, original as base). The caller
+ * owns seeding the output file and waiting for the user to click Apply.
  */
 export async function mergeWithIdea(
 	originalPath: string,
 	conflictPath: string,
 	outputPath: string,
-): Promise<string | null> {
+): Promise<void> {
 	const launcher = resolveIdeaCommand();
 	if (!launcher) {
 		console.error(
 			'IDEA not found. Pass the full command, e.g. --diff-tool \'"C:\\Program Files\\JetBrains\\IntelliJ IDEA 2026.1\\bin\\idea64.exe" diff\'',
 		);
-		return null;
+		return;
 	}
-	// IDEA (no base given) treats the output file's current contents as the merge
-	// base. Seed it with the original so the result pane starts as "yours" and
-	// the user pulls conflict-side changes into it before hitting Apply.
-	copyFileSync(originalPath, outputPath);
-	const seed = readFileSync(outputPath, "utf8");
+	// 3-way form with the original as base: the 2-way (no-base) CLI merge crashes
+	// IDEA 2026.1 with an EDT/write-thread violation on apply. The output file is
+	// expected to be pre-seeded by the caller (IDEA treats its contents as base).
 	try {
-		// 3-way form with the original as base: the 2-way (no-base) CLI merge crashes
-		// IDEA 2026.1 with an EDT/write-thread violation on apply.
 		execSync(`${launcher} merge "${originalPath}" "${conflictPath}" "${originalPath}" "${outputPath}"`, {
 			stdio: "inherit",
 		});
@@ -135,21 +131,6 @@ export async function mergeWithIdea(
 		console.error("Failed to launch IDEA merge");
 		console.error(err);
 	}
-	// Some launchers (e.g. rebased64) dispatch to a running instance and return
-	// immediately; IDEA writes the output only when the user clicks Apply.
-	// Poll until the result differs from the seed (applied) or timeout (cancel).
-	for (let i = 0; i < 1200; i++) {
-		try {
-			if (existsSync(outputPath)) {
-				const content = readFileSync(outputPath, "utf8");
-				if (content !== seed) return content;
-			}
-		} catch {
-			// output file briefly locked by IDEA mid-write — keep polling
-		}
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-	return null;
 }
 /**
  * Display a side-by-side diff between two files in the terminal.
