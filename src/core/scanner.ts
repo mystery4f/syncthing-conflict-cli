@@ -45,7 +45,8 @@ export async function scanConflicts(options: ScanOptions): Promise<ConflictPair[
 		dot: true,
 		absolute: true,
 		onlyFiles: true,
-		ignore: exclude?.map((p) => `**/${p}/**`) ?? [],
+		// Always skip our own backup dirs so resolved files don't reappear next scan
+		ignore: ["**/.stc-backup/**", ...(exclude?.map((p) => `**/${p}/**`) ?? [])],
 		deep: depth ?? Infinity,
 	};
 
