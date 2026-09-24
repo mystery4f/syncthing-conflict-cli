@@ -7,9 +7,13 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d4d4;overflow:hidden;height:100vh}
-.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 16px;background:#2d2d2d;border-bottom:1px solid #444}
-.toolbar h1{font-size:15px;font-weight:600;max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px;background:#2d2d2d;border-bottom:1px solid #444}
+.toolbar h1{font-size:15px;font-weight:600;max-width:30vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toolbar .info{font-size:12px;color:#aaa;flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-group{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.nav-btn{padding:4px 10px;border:1px solid #555;border-radius:4px;background:transparent;color:#ccc;cursor:pointer;font-size:12px}
+.nav-btn:hover{background:#3d3d3d;color:#fff}
+.nav-count{font-size:11px;color:#4ec9b0;min-width:64px;text-align:center}
 .btn{padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px}
 .btn-primary{background:#0e639c;color:#fff;font-weight:600}
 .btn-primary:hover{background:#1177bb}
@@ -29,7 +33,7 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d
 .row{display:flex;min-height:26px;align-items:stretch;border-bottom:1px solid rgba(255,255,255,0.03)}
 .row-removed{background:rgba(244,135,113,0.12)}
 .row-added{background:rgba(78,201,176,0.12)}
-.gutter{width:42px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#555;user-select:none}
+.gutter{width:52px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#555;user-select:none;gap:2px}
 .content{flex:1;white-space:pre;overflow:hidden;text-overflow:ellipsis;font-family:Consolas,monospace;font-size:13px;line-height:26px;padding:0 8px}
 .gutter-btn{cursor:pointer;border-radius:3px;font-size:11px;border:none;color:#fff;padding:1px 5px;margin:1px;opacity:0.75}
 .gutter-btn:hover{opacity:1}
@@ -38,10 +42,13 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d
 .accept-all{font-size:10px;padding:2px 6px;border:1px solid #555;border-radius:3px;background:transparent;color:#888;cursor:pointer}
 .accept-all:hover{color:#fff;border-color:#888}
 .center-row{display:flex;min-height:26px;align-items:stretch;border-bottom:1px solid rgba(255,255,255,0.03)}
-.center-row.conflict-row{background:rgba(86,156,214,0.08)}
+.center-row.auto-row{background:rgba(78,201,176,0.07)}
+.center-row.conflict-row{background:rgba(244,135,113,0.09)}
+.center-row.conflict-row.unresolved{background:rgba(244,135,113,0.16)}
 .center-row.active{outline:1px solid rgba(86,156,214,0.6);outline-offset:-1px}
 .center-input{flex:1;white-space:pre;overflow:hidden;font-family:Consolas,monospace;font-size:13px;line-height:26px;padding:0 8px;background:transparent;color:#d4d4d4;border:none;outline:none;resize:none}
 .center-input:focus{background:rgba(86,156,214,0.06)}
+.auto-badge{color:#4ec9b0;font-size:9px;letter-spacing:0.5px}
 .status-bar{padding:4px 16px;background:#007acc;color:#fff;font-size:12px;text-align:center;position:fixed;bottom:0;left:0;right:0;z-index:10;display:none}
 .empty{display:flex;align-items:center;justify-content:center;height:100vh;color:#4ec9b0;font-size:18px;flex-direction:column;gap:8px;text-align:center}
 .empty small{color:#999;font-size:12px}
@@ -51,6 +58,11 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d
 <div class="toolbar">
   <h1 id="title">Merge Conflicts</h1>
   <span class="info" id="status">Loading...</span>
+  <div class="nav-group">
+    <button class="nav-btn" id="btnPrevConflict" title="Shift+F7">‹ Prev</button>
+    <span class="nav-count" id="conflictCount">0/0 conflicts</span>
+    <button class="nav-btn" id="btnNextConflict" title="F7">Next ›</button>
+  </div>
   <div>
     <button class="btn btn-secondary" id="btnSkip">Skip</button>
     <button class="btn btn-danger" id="btnQuit">Quit</button>
@@ -61,19 +73,19 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d
   <div class="panel panel-left">
     <div class="panel-title">
       <span class="label-orig">Original</span>
-      <button class="accept-all" id="btnAcceptAllLeft">All</button>
+      <button class="accept-all" id="btnAcceptAllLeft">All left</button>
     </div>
     <div class="path" id="origPath" style="padding:4px 12px;background:#252525"></div>
     <div class="panel-body" id="leftBody"></div>
   </div>
   <div class="panel panel-center">
-    <div class="panel-title"><span class="label-merge">Merged Result</span><span style="color:#888;font-size:10px">editable · Ctrl/Cmd+Enter Save & Next · F7 next diff</span></div>
+    <div class="panel-title"><span class="label-merge">Merged Result</span><span style="color:#888;font-size:10px">Ctrl+Enter Save · F7 / Shift+F7 差异导航 · 1/2 接左/接右</span></div>
     <div class="panel-body" id="centerBody"></div>
   </div>
   <div class="panel panel-right">
     <div class="panel-title">
       <span class="label-conf">Conflict</span>
-      <button class="accept-all" id="btnAcceptAllRight">All</button>
+      <button class="accept-all" id="btnAcceptAllRight">All right</button>
     </div>
     <div class="path" id="confPath" style="padding:4px 12px;background:#252525"></div>
     <div class="panel-body" id="rightBody"></div>
@@ -82,15 +94,16 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:#1e1e1e;color:#d4d
 <div class="status-bar" id="statusBar"></div>
 <script>
 var BLOCKS = [];
-var choices = [];
+var groups = [];        // {start,end,kind:'auto'|'conflict'} — 变更块分组
+var choices = [];       // per block: 'left'|'right'|null(null=按组默认)
 var centerEdits = [];
 var currentItem = null;
-var activeBlock = null;
+var activeGroup = null;
 
 loadState();
 
 function esc(s) {
-  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function showToast(text) {
@@ -98,18 +111,6 @@ function showToast(text) {
   bar.textContent = text;
   bar.style.display = "block";
   setTimeout(function(){ bar.style.display = "none"; }, 1800);
-}
-
-function resetForItem(item) {
-  currentItem = item;
-  BLOCKS = item.blocks || [];
-  choices = new Array(BLOCKS.length).fill(null);
-  centerEdits = [];
-  activeBlock = null;
-  for (var i = 0; i < BLOCKS.length; i++) {
-    if (BLOCKS[i].type === "removed") choices[i] = "left";
-    else if (BLOCKS[i].type === "added") choices[i] = "right";
-  }
 }
 
 function loadState() {
@@ -120,21 +121,72 @@ function loadState() {
 }
 
 function applyState(state) {
-  if (state.done) {
-    showFinished(state.message || "All conflicts processed.", state.result && state.result.success !== false, state.result);
-    return;
+  currentItem = state.item || null;
+  if (currentItem) {
+    BLOCKS = currentItem.blocks || [];
+    choices = [];
+    centerEdits = [];
+    activeGroup = null;
+    buildGroups();
   }
-  resetForItem(state.item);
   render();
+  if (state.done) showFinished(state.message || "Session finished", !state.result || state.result.success, state.result);
 }
 
 function showFinished(message, ok, result) {
-  var resolved = result ? result.resolved : 0;
-  var skipped = result ? result.skipped : 0;
-  document.body.innerHTML = '<div class="empty" style="color:' + (ok ? '#4ec9b0' : '#f48771') + '">' +
-    '<div>' + esc(ok ? '✓ ' + message : '✗ ' + message) + '</div>' +
-    '<small>Resolved ' + resolved + ', skipped ' + skipped + '. You can close this tab.</small>' +
-    '</div>';
+  document.getElementById("main").style.display = "none";
+  document.querySelector(".toolbar").style.display = "none";
+  var el = document.getElementById("statusBar");
+  el.style.display = "block";
+  el.style.background = ok ? "#2d7d46" : "#8b3a3a";
+  el.textContent = message + (result && result.resolved != null ? " · resolved " + result.resolved + ", skipped " + result.skipped : "");
+}
+
+/**
+ * 把变更块分组并分类：
+ * - 纯增（只有 conflict 侧有内容）→ auto：采纳冲突侧新增
+ * - 纯删（conflict 侧删除了 original 的行）→ auto：采纳删除
+ * - 两侧同一区域都有内容 → conflict：需人工决策（默认保留原始）
+ */
+function buildGroups() {
+  groups = [];
+  choices = [];
+  var i = 0;
+  while (i < BLOCKS.length) {
+    var b = BLOCKS[i];
+    if (b.type === "equal") { i++; continue; }
+    var start = i;
+    var removedLines = 0, addedLines = 0;
+    if (b.type === "removed") {
+      removedLines += b.lines.length;
+      i++;
+      if (BLOCKS[i] && BLOCKS[i].type === "added") { addedLines += BLOCKS[i].lines.length; i++; }
+    } else if (b.type === "added") {
+      addedLines += b.lines.length;
+      i++;
+    }
+    var end = i - 1;
+    var kind = (removedLines > 0 && addedLines > 0) ? "conflict" : "auto";
+    groups.push({ start: start, end: end, kind: kind });
+    for (var bi = start; bi <= end; bi++) {
+      if (BLOCKS[bi].type !== "equal") choices[bi] = kind === "auto" ? "right" : null;
+    }
+  }
+}
+
+function groupAt(blockIdx) {
+  for (var gi = 0; gi < groups.length; gi++) {
+    if (blockIdx >= groups[gi].start && blockIdx <= groups[gi].end) return groups[gi];
+  }
+  return null;
+}
+
+function conflictGroups() {
+  return groups.filter(function(g) { return g.kind === "conflict"; });
+}
+
+function unresolvedConflicts() {
+  return conflictGroups().filter(function(g) { return choices[g.start] == null; });
 }
 
 function render() {
@@ -151,19 +203,19 @@ function render() {
   document.getElementById("btnSave").textContent = currentItem.index === currentItem.total ? "Save & Finish" : "Save & Next";
 
   var origLine = 1, confLine = 1;
-  var resolved = 0, total = 0;
+  var conflicts = conflictGroups();
+  var unresolved = unresolvedConflicts();
 
   for (var bi = 0; bi < BLOCKS.length; bi++) {
     var b = BLOCKS[bi];
+    var g = groupAt(bi);
     var choice = choices[bi];
-    if (b.type !== "equal") total++;
-    if (b.type !== "equal" && choice != null) resolved++;
 
     if (b.type === "equal") {
       for (var li = 0; li < b.lines.length; li++) {
         var line = b.lines[li];
         addRow(leftBody, "", origLine++, line);
-        addCenterRow(centerBody, bi, li, editedOrDefault(bi, li, line), false);
+        addCenterRow(centerBody, bi, li, editedOrDefault(bi, li, line), false, null);
         addRow(rightBody, "", confLine++, line);
       }
     } else if (b.type === "removed") {
@@ -171,33 +223,37 @@ function render() {
       var rightBlock = nextAdded ? BLOCKS[bi + 1] : null;
       var maxLen = Math.max(b.lines.length, rightBlock ? rightBlock.lines.length : 0);
 
-      for (var li = 0; li < maxLen; li++) {
-        var origText = b.lines[li] || "";
-        var confText = rightBlock ? (rightBlock.lines[li] || "") : "";
-        addRow(leftBody, b.lines[li] != null ? "removed" : "", origLine, origText);
-        if (b.lines[li] != null) origLine++;
+      for (var li2 = 0; li2 < maxLen; li2++) {
+        var origText = b.lines[li2] || "";
+        var confText = rightBlock ? (rightBlock.lines[li2] || "") : "";
+        addRow(leftBody, b.lines[li2] != null ? "removed" : "", origLine, origText);
+        if (b.lines[li2] != null) origLine++;
 
         var mergedLine = "";
-        if (choice === "left" && b.lines[li] != null) mergedLine = b.lines[li];
+        if (choice === "left" && b.lines[li2] != null) mergedLine = b.lines[li2];
         else if (choice === "right" && confText) mergedLine = confText;
-        else if (choice == null && b.lines[li] != null) mergedLine = b.lines[li];
-        addCenterRow(centerBody, bi, li, editedOrDefault(bi, li, mergedLine), li === 0);
+        else if (choice == null && b.lines[li2] != null) mergedLine = b.lines[li2];
+        addCenterRow(centerBody, bi, li2, editedOrDefault(bi, li2, mergedLine), li2 === 0, g);
 
         addRow(rightBody, confText ? "added" : "", confLine, confText);
         if (confText) confLine++;
       }
       if (nextAdded) bi++;
     } else if (b.type === "added") {
-      for (var li = 0; li < b.lines.length; li++) {
+      for (var li3 = 0; li3 < b.lines.length; li3++) {
         addRow(leftBody, "", 0, "");
-        var mergedLine = (choice === "right") ? b.lines[li] : "";
-        addCenterRow(centerBody, bi, li, editedOrDefault(bi, li, mergedLine), li === 0);
-        addRow(rightBody, "added", confLine++, b.lines[li]);
+        var mergedLine2 = (choice === "right") ? b.lines[li3] : "";
+        addCenterRow(centerBody, bi, li3, editedOrDefault(bi, li3, mergedLine2), li3 === 0, g);
+        addRow(rightBody, "added", confLine++, b.lines[li3]);
       }
     }
   }
 
-  document.getElementById("status").textContent = currentItem.index + "/" + currentItem.total + " · " + currentItem.deviceId + " · " + resolved + "/" + total + " blocks resolved";
+  document.getElementById("status").textContent =
+    currentItem.index + "/" + currentItem.total + " · " + currentItem.deviceId +
+    " · " + (conflicts.length - unresolved.length) + "/" + conflicts.length + " conflicts resolved";
+  document.getElementById("conflictCount").textContent =
+    unresolved.length + "/" + conflicts.length + " conflicts";
 }
 
 function editedOrDefault(blockIdx, lineIdx, fallback) {
@@ -213,16 +269,23 @@ function addRow(container, cls, num, text) {
   container.appendChild(div);
 }
 
-function addCenterRow(container, blockIdx, lineIdx, text, showBtns) {
+function addCenterRow(container, blockIdx, lineIdx, text, showBtns, group) {
   var div = document.createElement("div");
+  var isChanged = BLOCKS[blockIdx] && BLOCKS[blockIdx].type !== "equal";
   div.className = "center-row";
-  if (BLOCKS[blockIdx] && BLOCKS[blockIdx].type !== "equal") div.className += " conflict-row";
-  if (activeBlock === blockIdx) div.className += " active";
+  if (isChanged && group && group.kind === "auto") div.className += " auto-row";
+  if (isChanged && group && group.kind === "conflict") {
+    div.className += " conflict-row";
+    if (choices[group.start] == null) div.className += " unresolved";
+  }
+  if (activeGroup != null && group && groups[activeGroup] === group) div.className += " active";
 
   var gutter = "";
-  if (showBtns && BLOCKS[blockIdx] && BLOCKS[blockIdx].type !== "equal") {
+  if (showBtns && isChanged && group && group.kind === "conflict") {
     gutter = '<button class="gutter-btn btn-accept-left" data-action="accept" data-block="' + blockIdx + '" data-side="left">\u00AB</button>' +
              '<button class="gutter-btn btn-accept-right" data-action="accept" data-block="' + blockIdx + '" data-side="right">\u00BB</button>';
+  } else if (showBtns && isChanged && group && group.kind === "auto") {
+    gutter = '<span class="auto-badge">AUTO</span>';
   }
   div.innerHTML = '<div class="gutter">' + gutter + '</div>' +
     '<textarea class="center-input" data-block="' + blockIdx + '" data-line="' + lineIdx + '" rows="1">' + esc(text) + '</textarea>';
@@ -234,7 +297,8 @@ document.addEventListener("click", function(e) {
   if (!btn) return;
   if (btn.dataset.action === "accept") {
     choices[parseInt(btn.dataset.block, 10)] = btn.dataset.side;
-    activeBlock = parseInt(btn.dataset.block, 10);
+    var g = groupAt(parseInt(btn.dataset.block, 10));
+    activeGroup = groups.indexOf(g);
     render();
   }
 });
@@ -250,7 +314,10 @@ document.getElementById("btnAcceptAllRight").addEventListener("click", function(
 });
 
 document.addEventListener("focusin", function(e) {
-  if (e.target.classList.contains("center-input")) activeBlock = parseInt(e.target.dataset.block, 10);
+  if (e.target.classList.contains("center-input")) {
+    var g = groupAt(parseInt(e.target.dataset.block, 10));
+    activeGroup = groups.indexOf(g);
+  }
 });
 
 document.addEventListener("input", function(e) {
@@ -276,18 +343,18 @@ function buildMergedResult() {
       var hasRight = BLOCKS[bi + 1] && BLOCKS[bi + 1].type === "added";
       var rightBlock = hasRight ? BLOCKS[bi + 1] : null;
       var maxLen = Math.max(b.lines.length, rightBlock ? rightBlock.lines.length : 0);
-      for (var li = 0; li < maxLen; li++) {
+      for (var li2 = 0; li2 < maxLen; li2++) {
         var mergedLine = "";
-        if (centerEdits[bi] && centerEdits[bi][li] !== undefined) mergedLine = centerEdits[bi][li] || "";
-        else if (choice === "left") mergedLine = b.lines[li] || "";
-        else if (choice === "right") mergedLine = (rightBlock && rightBlock.lines[li]) || "";
-        else mergedLine = b.lines[li] || (rightBlock && rightBlock.lines[li]) || "";
+        if (centerEdits[bi] && centerEdits[bi][li2] !== undefined) mergedLine = centerEdits[bi][li2] || "";
+        else if (choice === "left") mergedLine = b.lines[li2] || "";
+        else if (choice === "right") mergedLine = (rightBlock && rightBlock.lines[li2]) || "";
+        else mergedLine = b.lines[li2] || (rightBlock && rightBlock.lines[li2]) || "";
         result.push(mergedLine);
       }
       if (hasRight) bi++;
     } else if (b.type === "added") {
       if (choice === "right") {
-        for (var li = 0; li < b.lines.length; li++) result.push((centerEdits[bi] && centerEdits[bi][li]) || b.lines[li]);
+        for (var li3 = 0; li3 < b.lines.length; li3++) result.push((centerEdits[bi] && centerEdits[bi][li3]) || b.lines[li3]);
       }
     }
   }
@@ -308,47 +375,45 @@ document.getElementById("btnSave").addEventListener("click", function() { postAn
 document.getElementById("btnSkip").addEventListener("click", function() { postAndApply("/skip"); });
 document.getElementById("btnQuit").addEventListener("click", function() { postAndApply("/quit"); });
 
+function unresolvedConflictGroups() {
+  return groups.filter(function(g) { return g.kind === "conflict" && choices[g.start] == null; });
+}
+
+function jumpConflict(dir) {
+  var list = unresolvedConflictGroups();
+  if (list.length === 0) { showToast("No unresolved conflicts"); return; }
+  var pos = -1;
+  if (activeGroup != null && groups[activeGroup] && groups[activeGroup].kind === "conflict" && choices[groups[activeGroup].start] == null) {
+    pos = list.indexOf(groups[activeGroup]);
+  }
+  var next = dir > 0 ? (pos + 1) % list.length : (pos <= 0 ? list.length - 1 : pos - 1);
+  var g = list[next];
+  activeGroup = groups.indexOf(g);
+  render();
+  focusBlock(g.start);
+}
+
+document.getElementById("btnNextConflict").addEventListener("click", function() { jumpConflict(1); });
+document.getElementById("btnPrevConflict").addEventListener("click", function() { jumpConflict(-1); });
+
 document.addEventListener("keydown", function(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
     postAndApply("/save", buildMergedResult());
-  } else if (e.altKey && e.key === "ArrowLeft") {
+  } else if (e.key === "F7" && e.shiftKey) {
     e.preventDefault();
-    acceptActive("left");
-  } else if (e.altKey && e.key === "ArrowRight") {
-    e.preventDefault();
-    acceptActive("right");
+    jumpConflict(-1);
   } else if (e.key === "F7") {
     e.preventDefault();
-    focusNextConflict();
+    jumpConflict(1);
+  } else if (e.key === "1" && activeGroup != null && groups[activeGroup] && groups[activeGroup].kind === "conflict") {
+    choices[groups[activeGroup].start] = "left";
+    render();
+  } else if (e.key === "2" && activeGroup != null && groups[activeGroup] && groups[activeGroup].kind === "conflict") {
+    choices[groups[activeGroup].start] = "right";
+    render();
   }
 });
-
-function acceptActive(side) {
-  var target = activeBlock;
-  if (target == null || !BLOCKS[target] || BLOCKS[target].type === "equal") target = firstConflictBlock();
-  if (target != null) {
-    choices[target] = side;
-    activeBlock = target;
-    render();
-    focusBlock(target);
-  }
-}
-
-function firstConflictBlock() {
-  for (var i = 0; i < BLOCKS.length; i++) if (BLOCKS[i].type !== "equal") return i;
-  return null;
-}
-
-function focusNextConflict() {
-  var start = activeBlock == null ? -1 : activeBlock;
-  for (var i = start + 1; i < BLOCKS.length; i++) {
-    if (BLOCKS[i].type !== "equal") { activeBlock = i; render(); focusBlock(i); return; }
-  }
-  for (var j = 0; j <= start; j++) {
-    if (BLOCKS[j].type !== "equal") { activeBlock = j; render(); focusBlock(j); return; }
-  }
-}
 
 function focusBlock(blockIdx) {
   setTimeout(function() {
