@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveConflict, resolveGroup, autoResolveGroup } from "../core/resolver.js";
+import { applyMergedPair, resolveConflict, resolveGroup, autoResolveGroup } from "../core/resolver.js";
 import type { ConflictPair } from "../core/scanner.js";
 import type { ConflictMeta } from "../utils/parser.js";
 
@@ -272,6 +272,40 @@ describe("resolver", () => {
 			for (const p of pairs) {
 				expect(existsSync(p.meta.conflictPath)).toBe(false);
 			}
+		});
+	});
+
+	describe("applyMergedPair", () => {
+		it("writes merged content to original and removes the conflict file", () => {
+			const dir = join(TMP_BASE, `merged-${++testCounter}`);
+			mkdirSync(dir, { recursive: true });
+			const pair = makePair(dir, "notes.md");
+			writeFileSync(pair.meta.originalPath, "original", "utf-8");
+			writeFileSync(pair.meta.conflictPath, "conflict", "utf-8");
+			const mergedPath = join(dir, "notes.merged.md");
+			writeFileSync(mergedPath, "merged result", "utf-8");
+
+			const result = applyMergedPair(pair, mergedPath);
+
+			expect(result.success).toBe(true);
+			expect(readFileSync(pair.meta.originalPath, "utf-8")).toBe("merged result");
+			expect(existsSync(pair.meta.conflictPath)).toBe(false);
+			expect(existsSync(mergedPath)).toBe(true); // caller cleans up the temp file
+		});
+
+		it("backs up the original before overwriting", () => {
+			const dir = join(TMP_BASE, `merged-${++testCounter}`);
+			mkdirSync(dir, { recursive: true });
+			const pair = makePair(dir, "notes.md");
+			writeFileSync(pair.meta.originalPath, "original", "utf-8");
+			writeFileSync(pair.meta.conflictPath, "conflict", "utf-8");
+			const mergedPath = join(dir, "notes.merged.md");
+			writeFileSync(mergedPath, "merged result", "utf-8");
+
+			applyMergedPair(pair, mergedPath);
+
+			const backupDir = join(dir, ".stc-backup");
+			expect(existsSync(join(backupDir, "notes.md"))).toBe(true);
 		});
 	});
 });

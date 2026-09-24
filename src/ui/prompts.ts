@@ -11,6 +11,7 @@ export interface PromptAction {
 	choice: ResolveChoice;
 	viewDiff?: boolean;
 	viewDiffConflictIndex?: number;
+	ideaMerge?: boolean;
 	quit?: boolean;
 }
 
@@ -19,6 +20,7 @@ export interface GroupPromptAction {
 	viewDiff?: boolean;
 	viewDiffConflictIndex?: number;
 	mergeConflictIndex?: number;
+	ideaMergeConflictIndex?: number;
 	quit?: boolean;
 }
 
@@ -59,6 +61,7 @@ export async function promptGroupAction(
 	pairs: ConflictPair[],
 	groupIndex: number,
 	totalGroups: number,
+	ideaMerge = false,
 ): Promise<GroupPromptAction> {
 	const firstPair = pairs[0];
 	if (!firstPair) return { target: { type: "skip" }, quit: true };
@@ -94,8 +97,11 @@ export async function promptGroupAction(
 		mainChoices.push({ name: "View diff (pick version next)", value: "act:diff" });
 		mainChoices.push({ name: "Keep original", value: "original" });
 		mainChoices.push({ name: "Keep a conflict version (pick next)", value: "act:keep" });
+		if (ideaMerge) {
+			mainChoices.push({ name: "Merge in IDEA (pick version next)", value: "act:idea-merge" });
+		}
 		mainChoices.push({
-			name: "Merge remaining via GUI (pick first version next)",
+			name: "Merge via browser GUI (pick first version next)",
 			value: "act:merge",
 		});
 	} else {
@@ -123,7 +129,7 @@ export async function promptGroupAction(
 	}
 
 	// Step 2: Pick which conflict version
-	if (action === "act:diff" || action === "act:keep" || action === "act:merge") {
+	if (action === "act:diff" || action === "act:keep" || action === "act:merge" || action === "act:idea-merge") {
 		const versionChoices: Array<{ name: string; value: string }> = [];
 		for (let i = 0; i < pairs.length; i++) {
 			const p = pairs[i];
@@ -148,6 +154,9 @@ export async function promptGroupAction(
 		if (action === "act:merge") {
 			return { target: { type: "skip" }, mergeConflictIndex: idx };
 		}
+		if (action === "act:idea-merge") {
+			return { target: { type: "skip" }, ideaMergeConflictIndex: idx };
+		}
 	}
 
 	return { target: { type: "skip" } };
@@ -160,6 +169,7 @@ export async function promptConflictAction(
 	pair: ConflictPair,
 	index: number,
 	total: number,
+	ideaMerge = false,
 ): Promise<PromptAction> {
 	const { meta, originalSize, conflictSize, originalMtime, conflictMtime, originalExists } = pair;
 
@@ -176,7 +186,7 @@ export async function promptConflictAction(
 	const choices: Array<{ name: string; value: string }> = [];
 
 	if (originalExists) {
-		choices.push({ name: "View diff (VS Code)", value: "diff" });
+		choices.push({ name: "View diff", value: "diff" });
 		choices.push({ name: "Keep original", value: "original" });
 	}
 
@@ -187,7 +197,8 @@ export async function promptConflictAction(
 
 	if (originalExists) {
 		choices.push({ name: "Keep both", value: "both" });
-		choices.push({ name: "Merge remaining via GUI", value: "merge" });
+		if (ideaMerge) choices.push({ name: "Merge in IDEA", value: "idea-merge" });
+		choices.push({ name: "Merge via browser GUI", value: "merge" });
 	}
 
 	choices.push({ name: "Delete conflict file", value: "delete" });
@@ -201,6 +212,7 @@ export async function promptConflictAction(
 	if (action === "quit") return { choice: "skip", quit: true };
 	if (action === "delete") return { choice: "delete" as ResolveChoice };
 	if (action === "merge") return { choice: "merge" as ResolveChoice };
+	if (action === "idea-merge") return { choice: "skip", ideaMerge: true };
 
 	return { choice: action as ResolveChoice };
 }

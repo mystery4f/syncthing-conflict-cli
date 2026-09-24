@@ -242,6 +242,35 @@ function deleteConflict(
 /**
  * Auto-resolve a group of conflicts for the same original file.
  */
+/**
+ * Apply an externally merged result: write merged content to the original path
+ * and remove the conflict file it was merged with. Other conflicts of the same
+ * original are left untouched.
+ */
+export function applyMergedPair(
+	pair: ConflictPair,
+	mergedPath: string,
+	options: ResolveOptions = {},
+): ResolveResult {
+	const { backup = true, backupDir } = options;
+	const { originalPath, conflictPath } = pair.meta;
+
+	try {
+		if (pair.originalExists && backup) backupFile(originalPath, backupDir);
+		copyFileSync(mergedPath, originalPath);
+		if (backup) backupFile(conflictPath, backupDir);
+		unlinkSync(conflictPath);
+		return { pair, choice: "original", success: true };
+	} catch (err) {
+		return {
+			pair,
+			choice: "original",
+			success: false,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
 export function autoResolveGroup(
 	pairs: ConflictPair[],
 	strategy: AutoStrategy,

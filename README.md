@@ -109,7 +109,20 @@ Conflict group 1/2: readme.md
 | `--sort <field>` | 排序字段：`time`、`size`、`name` |
 | `--exclude <patterns>` | 排除模式（逗号分隔） |
 | `--depth <n>` | 递归深度限制 |
-| `--diff-tool <command>` | 外部 diff 工具（如 `code --diff`） |
+| `--diff-tool <command>` | 外部 diff 工具（如 `code --diff`）；`idea` 为简写，自动探测 IDEA 安装路径 |
+
+最简单的方式：`--diff-tool idea`，自动探测 IDEA 安装路径：
+
+```bash
+stc resolve ~/sync --diff-tool idea
+```
+
+探测不到时手动传全路径（阻塞到窗口关闭，看完关窗后继续选版本，详见 [docs/idea-cli-diff.md](docs/idea-cli-diff.md)）：
+
+```bash
+stc resolve ~/sync --diff-tool '"C:\Program Files\JetBrains\IntelliJ IDEA 2026.1\bin\idea64.exe" diff'
+```
+检测到 IDEA 后「Merge in IDEA」自动出现在菜单：中间结果栏初始为原始内容，把右侧冲突改动挪进去后点「应用」，结果写回原始文件、冲突副本删除（先备份）；结果未变则冲突保留。
 
 ### `stc auto [dir]`
 

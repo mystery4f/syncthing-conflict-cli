@@ -3,6 +3,8 @@
  */
 
 import { execSync } from "node:child_process";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import fg from "fast-glob";
 import chalk from "chalk";
 import { generateDiff, generateSideBySideDiff } from "../core/differ.js";
 
@@ -36,14 +38,64 @@ export function viewDiff(originalPath: string, conflictPath: string): void {
 }
 
 /**
- * View diff using an external tool.
+ * Resolve the IDEA command-line diff launcher.
+ *
+ * ponytail: probe common install layouts + PATH only; registry queries /
+ * Toolbox symlinks are added if real setups ever miss.
+ */
+export function resolveIdeaCommand(): string | null {
+	const patterns: string[] = [];
+	if (process.platform === "win32") {
+		// User-specified install first, then stock locations
+		// Custom install dir env var (e.g. Rebased=D:\Soft\Rebased\bin), then stock locations
+		const envBin = process.env.Rebased;
+		if (envBin) patterns.push(`${envBin.replace(/\\/g, "/")}/rebased64.exe`);
+		patterns.push("C:/Program Files/JetBrains/IntelliJ IDEA*/bin/idea64.exe");
+		const lad = process.env.LOCALAPPDATA?.replace(/\\/g, "/");
+		if (lad) {
+			patterns.push(`${lad}/JetBrains/Toolbox/apps/**/bin/idea64.exe`);
+			patterns.push(`${lad}/JetBrains/Toolbox/scripts/idea64.exe`);
+		}
+	} else {
+		patterns.push("/usr/local/bin/idea", "/snap/bin/idea", "/opt/idea*/bin/idea.sh");
+	}
+	const hit = fg.sync(patterns, { onlyFiles: true })[0];
+	if (hit) return `"${hit}"`;
+	// Last resort: any known launcher on PATH
+	const onPath = process.platform === "win32"
+		? ["rebased64.exe", "idea64.exe"]
+		: ["idea", "idea.sh"];
+	for (const exe of onPath) {
+		try {
+			execSync(`${process.platform === "win32" ? "where" : "which"} ${exe}`, { stdio: "ignore" });
+			return exe.replace(".exe", "");
+		} catch {
+			// not on PATH, try next
+		}
+	}
+	return null;
+}
+
+/**
+ * View diff using an external tool. `idea` is shorthand for the IDEA CLI diff.
  */
 export function viewDiffExternal(
 	originalPath: string,
 	conflictPath: string,
 	tool: string,
 ): void {
-	const cmd = `${tool} "${originalPath}" "${conflictPath}"`;
+	let base = tool.trim();
+	if (base.toLowerCase() === "idea") {
+		const resolved = resolveIdeaCommand();
+		if (!resolved) {
+			console.error(
+				'IDEA not found. Pass the full command, e.g. --diff-tool \'"C:\\Program Files\\JetBrains\\IntelliJ IDEA 2026.1\\bin\\idea64.exe" diff\'',
+			);
+			return;
+		}
+		base = `${resolved} diff`;
+	}
+	const cmd = `${base} "${originalPath}" "${conflictPath}"`;
 	try {
 		execSync(cmd, { stdio: "inherit" });
 	} catch (err) {
@@ -52,6 +104,53 @@ export function viewDiffExternal(
 	}
 }
 
+/**
+ * Open IDEA's merge tool (original vs conflict). Returns the merged result
+ * written by IDEA when the user clicks Apply, or null if nothing was produced.
+ */
+export async function mergeWithIdea(
+	originalPath: string,
+	conflictPath: string,
+	outputPath: string,
+): Promise<string | null> {
+	const launcher = resolveIdeaCommand();
+	if (!launcher) {
+		console.error(
+			'IDEA not found. Pass the full command, e.g. --diff-tool \'"C:\\Program Files\\JetBrains\\IntelliJ IDEA 2026.1\\bin\\idea64.exe" diff\'',
+		);
+		return null;
+	}
+	// IDEA (no base given) treats the output file's current contents as the merge
+	// base. Seed it with the original so the result pane starts as "yours" and
+	// the user pulls conflict-side changes into it before hitting Apply.
+	copyFileSync(originalPath, outputPath);
+	const seed = readFileSync(outputPath, "utf8");
+	try {
+		// 3-way form with the original as base: the 2-way (no-base) CLI merge crashes
+		// IDEA 2026.1 with an EDT/write-thread violation on apply.
+		execSync(`${launcher} merge "${originalPath}" "${conflictPath}" "${originalPath}" "${outputPath}"`, {
+			stdio: "inherit",
+		});
+	} catch (err) {
+		console.error("Failed to launch IDEA merge");
+		console.error(err);
+	}
+	// Some launchers (e.g. rebased64) dispatch to a running instance and return
+	// immediately; IDEA writes the output only when the user clicks Apply.
+	// Poll until the result differs from the seed (applied) or timeout (cancel).
+	for (let i = 0; i < 1200; i++) {
+		try {
+			if (existsSync(outputPath)) {
+				const content = readFileSync(outputPath, "utf8");
+				if (content !== seed) return content;
+			}
+		} catch {
+			// output file briefly locked by IDEA mid-write — keep polling
+		}
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+	return null;
+}
 /**
  * Display a side-by-side diff between two files in the terminal.
  *

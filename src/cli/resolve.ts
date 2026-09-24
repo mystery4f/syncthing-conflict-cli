@@ -6,17 +6,18 @@
  */
 
 import { createInterface } from "node:readline";
+import { readFileSync, unlinkSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSideBySideDiff } from "../core/differ.js";
-import { resolveConflict, resolveGroup } from "../core/resolver.js";
+import { applyMergedPair, resolveConflict, resolveGroup } from "../core/resolver.js";
 import {
 	type ConflictPair,
 	groupByOriginal,
 	type ScanOptions,
 	scanConflicts,
 } from "../core/scanner.js";
-import { viewDiffExternal } from "../ui/diff-viewer.js";
+import { mergeWithIdea, resolveIdeaCommand, viewDiffExternal } from "../ui/diff-viewer.js";
 import { mergeGuiSession } from "../ui/merger.js";
 import { promptConflictAction, promptGroupAction } from "../ui/prompts.js";
 
@@ -27,7 +28,7 @@ export function registerResolveCommand(program: Command): void {
 		.option("--sort <field>", "Sort by: time, size, name", "time")
 		.option("--exclude <patterns>", "Comma-separated exclude patterns")
 		.option("--depth <n>", "Max recursion depth", Number.parseInt)
-		.option("--diff-tool <command>", "External diff tool command")
+		.option("--diff-tool <command>", "External diff tool command (e.g. code --diff, idea)")
 		.action(async (dir: string, options: ResolveCommandOptions) => {
 			const directory = dir || ".";
 			await runResolve(directory, options);
@@ -39,6 +40,8 @@ interface ResolveCommandOptions {
 	exclude?: string;
 	depth?: number;
 	diffTool?: string;
+	/** Set once before the interactive loop: IDEA CLI detected */
+	ideaMerge?: boolean;
 }
 
 type HandleResult =
@@ -52,6 +55,9 @@ async function runResolve(directory: string, options: ResolveCommandOptions): Pr
 		exclude: options.exclude?.split(","),
 		depth: options.depth,
 	};
+
+	// IDEA merge available whenever the IDEA CLI launcher is detected (no flag needed)
+	options.ideaMerge = resolveIdeaCommand() !== null;
 
 	const pairs = await scanConflicts(scanOptions);
 
@@ -103,6 +109,39 @@ async function runResolve(directory: string, options: ResolveCommandOptions): Pr
 	console.log(chalk.bold(`\nDone! Resolved ${resolved}, skipped ${skipped}.`));
 }
 
+/**
+ * Open IDEA's merge tool for one conflict pair and apply the result:
+ * merged content replaces the original file, the conflict file is removed
+ * (both backed up first).
+ */
+async function runIdeaMerge(pair: ConflictPair): Promise<void> {
+	const mergedPath = `${pair.meta.originalPath}.stc-merged`;
+	console.log(
+		chalk.gray(
+			"Opening IDEA merge — edit the middle result pane, click 应用 (Apply) to save.",
+			"stc 自动等待合并结果（最多 10 分钟，Ctrl+C 放弃）"
+		),
+	);
+	const merged = await mergeWithIdea(pair.meta.originalPath, pair.meta.conflictPath, mergedPath);
+	if (merged === null) {
+		console.log(chalk.gray("No merge result within 10 minutes — skipped (conflict kept)."));
+	} else if (merged === readFileSync(pair.meta.originalPath, "utf8")) {
+		console.log(chalk.gray("Result identical to original — nothing merged (conflict kept)."));
+	} else {
+		const result = applyMergedPair(pair, mergedPath);
+		if (result.success) {
+			console.log(chalk.green("✓ Merged content saved to original, conflict file removed"));
+		} else {
+			console.log(chalk.red(`✗ Failed to apply merge: ${result.error}`));
+		}
+	}
+	try {
+		unlinkSync(mergedPath);
+	} catch {
+		// cleanup best-effort
+	}
+}
+
 async function handleSinglePair(
 	pair: ConflictPair,
 	groupIndex: number,
@@ -116,13 +155,23 @@ async function handleSinglePair(
 	}
 
 	for (;;) {
-		const action = await promptConflictAction(pair, groupIndex, totalGroups);
+		const action = await promptConflictAction(
+			pair,
+			groupIndex,
+			totalGroups,
+			options.ideaMerge === true,
+		);
 
 		if (action.quit) return { status: "quit" };
 
 		if (action.viewDiff) {
 			showDiff(pair.meta.originalPath, pair.meta.conflictPath, options.diffTool);
 			await pressEnterToContinue();
+			continue;
+		}
+
+		if (action.ideaMerge) {
+			await runIdeaMerge(pair);
 			continue;
 		}
 
@@ -171,7 +220,12 @@ async function handleGroup(
 	}
 
 	for (;;) {
-		const action = await promptGroupAction(pairs, groupIndex, totalGroups);
+		const action = await promptGroupAction(
+			pairs,
+			groupIndex,
+			totalGroups,
+			options.ideaMerge === true,
+		);
 
 		if (action.quit) return { status: "quit" };
 
@@ -182,6 +236,12 @@ async function handleGroup(
 				showDiff(conflictPair.meta.originalPath, conflictPair.meta.conflictPath, options.diffTool);
 				await pressEnterToContinue();
 			}
+			continue;
+		}
+
+		if (action.ideaMergeConflictIndex !== undefined) {
+			const ideaPair = pairs[action.ideaMergeConflictIndex];
+			if (ideaPair) await runIdeaMerge(ideaPair);
 			continue;
 		}
 
